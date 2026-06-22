@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { stores } from '@/data/stores'
 import type { Store } from '@/types'
 import { Target, Clock, AlertCircle, PackageOpen, TrendingUp, TrendingDown, Award, ChevronDown } from 'lucide-react'
@@ -29,6 +29,12 @@ export default function Overview() {
     region === '全部区域' ? stores : stores.filter(s => s.region === region),
     [region]
   )
+
+  useEffect(() => {
+    if (filtered.length > 0 && !filtered.find(s => s.id === selectedStoreId)) {
+      setSelectedStoreId(filtered[0].id)
+    }
+  }, [filtered, selectedStoreId])
 
   const sorted = useMemo(() =>
     [...filtered].sort((a, b) => b.totalScore - a.totalScore),

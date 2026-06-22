@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { spotchecks } from '@/data/spotchecks'
+import { useAppStore } from '@/store/useAppStore'
 import type { SpotCheck } from '@/types'
 import {
   ClipboardCheck,
@@ -9,6 +9,8 @@ import {
   Camera,
   ChevronDown,
   Filter,
+  AlertTriangle,
+  ArrowRight,
 } from 'lucide-react'
 
 type ResultFilter = '全部' | '合规' | '不合规' | '待关注'
@@ -20,9 +22,13 @@ const resultConfig: Record<string, { label: string; bg: string; text: string }> 
 }
 
 export default function SpotCheck() {
+  const spotchecks = useAppStore((s) => s.spotchecks)
+  const createSpotCheckAnomaly = useAppStore((s) => s.createSpotCheckAnomaly)
+
   const [resultFilter, setResultFilter] = useState<ResultFilter>('全部')
   const [selectedCheck, setSelectedCheck] = useState<string | null>(null)
   const [storeFilter, setStoreFilter] = useState('全部')
+  const [justCreatedAnomaly, setJustCreatedAnomaly] = useState<string | null>(null)
 
   const stores = ['全部', ...Array.from(new Set(spotchecks.map((s) => s.storeName)))]
 
@@ -31,6 +37,14 @@ export default function SpotCheck() {
     if (storeFilter !== '全部' && s.storeName !== storeFilter) return false
     return true
   })
+
+  const handleCreateAnomaly = (check: SpotCheck) => {
+    const newAnomaly = createSpotCheckAnomaly(check.id)
+    if (newAnomaly) {
+      setJustCreatedAnomaly(newAnomaly.id)
+      setTimeout(() => setJustCreatedAnomaly(null), 3000)
+    }
+  }
 
   const resultButtons: ResultFilter[] = ['全部', '合规', '不合规', '待关注']
 
@@ -145,8 +159,33 @@ export default function SpotCheck() {
               </div>
 
               {expanded && (
-                <div className="mt-4 border-t border-gray-100 pt-3">
-                  <p className="text-sm leading-relaxed text-[#1B2A4A]/50">{check.notes}</p>
+                <div className="mt-4 border-t border-gray-100 pt-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-[#1B2A4A]/60 mb-1">备注</p>
+                    <p className="text-sm leading-relaxed text-[#1B2A4A]/70">{check.notes}</p>
+                  </div>
+                  {(check.result === 'fail' || check.result === 'warning') && (
+                    <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        <span className="text-sm text-amber-700">
+                          {check.result === 'fail' ? '检查不合规，请发起整改' : '存在待关注问题，建议发起整改'}
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCreateAnomaly(check) }}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+                      >
+                        发起整改 <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                  {justCreatedAnomaly && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-700 flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4" />
+                      整改任务已创建，可在异常闭环模块查看
+                    </div>
+                  )}
                 </div>
               )}
             </div>
