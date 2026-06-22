@@ -7,7 +7,7 @@ import type { Anomaly as AnomalyType, Attachment, TaskStatus } from '@/types'
 import {
   Clock, Loader, CheckCircle2, AlertTriangle, Eye, X, FileText, Plus, Upload, Send, Check, XCircle,
   History, AlertOctagon, Bell, ChevronRight, Paperclip, User, Calendar, ArrowLeft,
-  Users, CalendarDays, ChevronDown, ChevronUp } from 'lucide-react'
+  Users, CalendarDays, ChevronDown, ChevronUp, Megaphone } from 'lucide-react'
 
 type StatusFilter = 'all' | 'pending' | 'processing' | 'closed' | 'urgent' | 'overdue'
 type GroupBy = 'none' | 'assignee' | 'days'
@@ -29,6 +29,7 @@ const taskStatusMap: Record<string, { label: string; color: string; bgLight: str
   uploaded: { label: '已提交', color: 'text-ice-600', bgLight: 'bg-ice-50', dot: 'bg-ice-400' },
   approved: { label: '已通过', color: 'text-emerald-600', bgLight: 'bg-emerald-50', dot: 'bg-emerald-400' },
   rejected: { label: '已驳回', color: 'text-red-600', bgLight: 'bg-red-50', dot: 'bg-red-400' },
+  reminded: { label: '已催办', color: 'text-orange-600', bgLight: 'bg-orange-50', dot: 'bg-orange-400' },
 }
 
 const historyStatusLabel: Record<TaskStatus, string> = {
@@ -36,6 +37,7 @@ const historyStatusLabel: Record<TaskStatus, string> = {
   uploaded: '提交整改',
   approved: '审批通过',
   rejected: '审批驳回',
+  reminded: '催办提醒',
 }
 
 const getDaysRemaining = (deadline: string): number => {
@@ -60,12 +62,14 @@ export default function Anomaly() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const fromSpotCheck = searchParams.get('from') === 'spotcheck'
+  const returnTo = searchParams.get('returnTo')
 
   const anomalies = useAppStore((s) => s.anomalies)
   const addAnomaly = useAppStore((s) => s.addAnomaly)
   const submitRectification = useAppStore((s) => s.submitRectification)
   const approveRectification = useAppStore((s) => s.approveRectification)
   const rejectRectification = useAppStore((s) => s.rejectRectification)
+  const addReminder = useAppStore((s) => s.addReminder)
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(fromSpotCheck ? 'all' : 'all')
   const [selectedAnomaly, setSelectedAnomaly] = useState<AnomalyType | null>(null)
@@ -76,6 +80,9 @@ export default function Anomaly() {
   const [detailTab, setDetailTab] = useState<'tasks' | 'timeline'>('tasks')
   const [groupBy, setGroupBy] = useState<GroupBy>('none')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [selectedAnomalyIds, setSelectedAnomalyIds] = useState<Set<string>>(new Set())
+  const [showReminderModal, setShowReminderModal] = useState(false)
+  const [reminderNote, setReminderNote] = useState('')
 
   const [newForm, setNewForm] = useState({
     title: '',
@@ -104,7 +111,7 @@ export default function Anomaly() {
 
   const handleBack = () => {
     if (fromSpotCheck) {
-      navigate('/spotcheck')
+      navigate(`/spotcheck${returnTo ? '?' + decodeURIComponent(returnTo) : ''}`)
     } else {
       setShowDetail(false)
       setSelectedAnomaly(null)
@@ -284,6 +291,45 @@ export default function Anomaly() {
     }
   }
 
+  const toggleAnomalySelection = (id: string) => {
+    setSelectedAnomalyIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleGroupSelection = (groupKey: string) => {
+    const group = groupedData.find(g => g.key === groupKey)
+    if (!group) return
+    const groupIds = group.items.map(a => a.id)
+    const allSelected = groupIds.every(id => selectedAnomalyIds.has(id))
+    setSelectedAnomalyIds(prev => {
+      const next = new Set(prev)
+      if (allSelected) {
+        groupIds.forEach(id => next.delete(id))
+      } else {
+        groupIds.forEach(id => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const handleBatchReminder = () => {
+    if (selectedAnomalyIds.size === 0) return
+    setShowReminderModal(true)
+    setReminderNote('')
+  }
+
+  const confirmBatchReminder = () => {
+    if (selectedAnomalyIds.size === 0 || !reminderNote) return
+    addReminder(Array.from(selectedAnomalyIds), reminderNote)
+    setSelectedAnomalyIds(new Set())
+    setShowReminderModal(false)
+    setReminderNote('')
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -367,7 +413,7 @@ export default function Anomaly() {
                 {tabs.map((tab) => (
                   <button
                     key={tab.value}
-                    onClick={() => { setStatusFilter(tab.value); setExpandedGroups(new Set()) }}
+                    onClick={() => { setStatusFilter(tab.value); setExpandedGroups(new Set()); setSelectedAnomalyIds(new Set()) }}
                     className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                       statusFilter === tab.value
                         ? 'border-ice-400 text-ice-500'
@@ -383,7 +429,7 @@ export default function Anomaly() {
                   <span className="text-xs text-navy-200">分组：</span>
                   <div className="flex gap-1">
                     <button
-                      onClick={() => setGroupBy('none')}
+                      onClick={() => { setGroupBy('none'); setSelectedAnomalyIds(new Set()) }}
                       className={`text-xs px-2.5 py-1 rounded transition-colors ${
                         groupBy === 'none' ? 'bg-ice-100 text-ice-600' : 'bg-gray-100 text-navy-300 hover:bg-gray-200'
                       }`}
@@ -391,7 +437,7 @@ export default function Anomaly() {
                       无
                     </button>
                     <button
-                      onClick={() => setGroupBy('assignee')}
+                      onClick={() => { setGroupBy('assignee'); setSelectedAnomalyIds(new Set()) }}
                       className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded transition-colors ${
                         groupBy === 'assignee' ? 'bg-ice-100 text-ice-600' : 'bg-gray-100 text-navy-300 hover:bg-gray-200'
                       }`}
@@ -399,7 +445,7 @@ export default function Anomaly() {
                       <Users className="w-3 h-3" /> 按负责人
                     </button>
                     <button
-                      onClick={() => setGroupBy('days')}
+                      onClick={() => { setGroupBy('days'); setSelectedAnomalyIds(new Set()) }}
                       className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded transition-colors ${
                         groupBy === 'days' ? 'bg-ice-100 text-ice-600' : 'bg-gray-100 text-navy-300 hover:bg-gray-200'
                       }`}
@@ -410,6 +456,14 @@ export default function Anomaly() {
                   {groupBy !== 'none' && (
                     <button onClick={toggleAllGroups} className="text-xs text-ice-500 hover:text-ice-600">
                       {expandedGroups.size === groupedData.length ? '全部收起' : '全部展开'}
+                    </button>
+                  )}
+                  {selectedAnomalyIds.size > 0 && (
+                    <button
+                      onClick={handleBatchReminder}
+                      className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-orange-500 text-white hover:bg-orange-600 transition-colors"
+                    >
+                      <Megaphone className="w-3 h-3" /> 批量催办（{selectedAnomalyIds.size}）
                     </button>
                   )}
                 </div>
@@ -423,13 +477,13 @@ export default function Anomaly() {
                     const isExpanded = expandedGroups.has(group.key)
                     const overdueCount = group.items.filter(a => a.urgency === 'overdue').length
                     const soonCount = group.items.filter(a => a.urgency === 'soon').length
+                    const allGroupSelected = group.items.every(a => selectedAnomalyIds.has(a.id))
                     return (
                       <div key={group.key} className="border border-gray-100 rounded-lg overflow-hidden">
                         <div
-                          onClick={() => toggleGroup(group.key)}
                           className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
                         >
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3" onClick={() => toggleGroup(group.key)}>
                             {groupBy === 'assignee' ? (
                               <div className="w-8 h-8 rounded-full bg-ice-100 text-ice-600 flex items-center justify-center">
                                 <User className="w-4 h-4" />
@@ -452,12 +506,28 @@ export default function Anomaly() {
                               </span>
                             )}
                           </div>
-                          {isExpanded ? <ChevronUp className="w-4 h-4 text-navy-300" /> : <ChevronDown className="w-4 h-4 text-navy-300" />}
+                          <div className="flex items-center gap-3">
+                            {isExpanded && (
+                              <label className="flex items-center gap-1.5 text-xs text-navy-300 cursor-pointer" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={allGroupSelected}
+                                  onChange={() => toggleGroupSelection(group.key)}
+                                  className="rounded border-gray-300 text-ice-500 focus:ring-ice-400"
+                                />
+                                全选
+                              </label>
+                            )}
+                            <div onClick={() => toggleGroup(group.key)} className="cursor-pointer">
+                              {isExpanded ? <ChevronUp className="w-4 h-4 text-navy-300" /> : <ChevronDown className="w-4 h-4 text-navy-300" />}
+                            </div>
+                          </div>
                         </div>
                         {isExpanded && (
                           <table className="w-full text-sm">
                             <thead>
                               <tr className="text-left text-navy-200 text-xs border-b border-gray-50 bg-gray-50/50">
+                                <th className="px-4 py-2 font-medium w-8"></th>
                                 <th className="px-4 py-2 font-medium">异常标题</th>
                                 <th className="px-4 py-2 font-medium">门店</th>
                                 <th className="px-4 py-2 font-medium">项目类别</th>
@@ -472,8 +542,17 @@ export default function Anomaly() {
                                 const sc = statusConfig[a.status]
                                 const uc = urgencyConfig[a.urgency || 'normal']
                                 const days = getDaysRemaining(a.deadline)
+                                const isSelected = selectedAnomalyIds.has(a.id)
                                 return (
-                                  <tr key={a.id} className="border-b border-gray-50 hover:bg-surface-hover transition-colors">
+                                  <tr key={a.id} className={`border-b border-gray-50 transition-colors ${isSelected ? 'bg-orange-50/50' : 'hover:bg-surface-hover'}`}>
+                                    <td className="px-4 py-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => toggleAnomalySelection(a.id)}
+                                        className="rounded border-gray-300 text-orange-500 focus:ring-orange-400"
+                                      />
+                                    </td>
                                     <td className="px-4 py-3 font-medium text-navy-500">{a.title}</td>
                                     <td className="px-4 py-3 text-navy-300">{a.storeName}</td>
                                     <td className="px-4 py-3 text-navy-300">{a.projectName}</td>
@@ -561,7 +640,6 @@ export default function Anomaly() {
         </>
       )}
 
-      {/* 详情弹窗 */}
       {showDetail && currentAnomaly && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={handleBack}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -699,11 +777,14 @@ export default function Anomaly() {
                     return (
                       <div key={h.id} className="relative mb-6 last:mb-0">
                         <div className={`absolute -left-4 top-0.5 w-3.5 h-3.5 rounded-full ${ts.dot} border-2 border-white shadow`}></div>
-                        <div className="bg-gray-50 rounded-lg p-3 ml-4">
+                        <div className={`rounded-lg p-3 ml-4 ${ts.bgLight} ${h.status === 'reminded' ? 'border border-orange-200' : ''}`}>
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">
                               <span className="text-sm font-medium text-navy-500">{h.operator}</span>
                               <span className="text-xs text-navy-200">{h.operatorRole}</span>
+                              {h.status === 'reminded' && (
+                                <Megaphone className="w-3.5 h-3.5 text-orange-500" />
+                              )}
                             </div>
                             <span className={`text-xs px-1.5 py-0.5 rounded ${ts.color} ${ts.bgLight}`}>
                               {historyStatusLabel[h.status]}
@@ -743,7 +824,6 @@ export default function Anomaly() {
         </div>
       )}
 
-      {/* 新建整改任务弹窗 */}
       {showNewModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={() => setShowNewModal(false)}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
@@ -851,7 +931,6 @@ export default function Anomaly() {
         </div>
       )}
 
-      {/* 提交/审批弹窗 */}
       {showSubmitModal && currentAnomaly && activeTaskId && (() => {
         const task = currentAnomaly.rectificationTasks.find((t) => t.id === activeTaskId)
         if (!task) return null
@@ -975,6 +1054,56 @@ export default function Anomaly() {
           </div>
         )
       })()}
+
+      {showReminderModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={() => setShowReminderModal(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h2 className="text-lg font-bold text-navy-500 flex items-center gap-2">
+                <Megaphone className="w-5 h-5 text-orange-500" /> 批量催办
+              </h2>
+              <button onClick={() => setShowReminderModal(false)} className="text-navy-200 hover:text-navy-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-4 space-y-4">
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                <p className="text-sm text-orange-700">
+                  已选择 <span className="font-bold">{selectedAnomalyIds.size}</span> 条任务，催办记录将写入每条任务的时间线
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-navy-500 mb-1">催办说明 <span className="text-red-500">*</span></label>
+                <textarea
+                  value={reminderNote}
+                  onChange={(e) => setReminderNote(e.target.value)}
+                  placeholder="请输入催办说明，例如：请尽快提交整改方案..."
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400/50 focus:border-orange-400 resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100">
+              <button
+                onClick={() => setShowReminderModal(false)}
+                className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-navy-300 hover:bg-gray-200 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmBatchReminder}
+                disabled={!reminderNote}
+                className="inline-flex items-center gap-1 px-4 py-2 text-sm rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-colors disabled:opacity-50"
+              >
+                <Megaphone className="w-4 h-4" /> 确认催办
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

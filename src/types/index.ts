@@ -72,7 +72,7 @@ export interface Attachment {
   url: string
 }
 
-export type TaskStatus = 'pending' | 'uploaded' | 'approved' | 'rejected'
+export type TaskStatus = 'pending' | 'uploaded' | 'approved' | 'rejected' | 'reminded'
 
 export interface TaskHistoryItem {
   id: string
@@ -158,6 +158,30 @@ export interface MetricsComparison {
   isBaseline?: boolean
 }
 
+export interface RiskStore {
+  name: string
+  reason: string
+  completionRate: number
+  onTimeRate: number
+  anomalyCount: number
+}
+
+export interface TrackingItem {
+  title: string
+  storeName: string
+  deadline: string
+  status: string
+  assignee: string
+}
+
+export interface ReminderRecord {
+  id: string
+  anomalyIds: string[]
+  operator: string
+  timestamp: string
+  note: string
+}
+
 export interface MonthlyReport {
   id: string
   month: string
@@ -169,4 +193,6 @@ export interface MonthlyReport {
   anomalySummary: AnomalySummaryItem[]
   trainingSuggestions: string[]
   schedulingSuggestions: string[]
+  riskStores?: RiskStore[]
+  trackingItems?: TrackingItem[]
 }

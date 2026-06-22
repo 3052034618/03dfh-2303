@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '@/store/useAppStore'
 import type { SpotCheck } from '@/types'
@@ -14,7 +14,6 @@ import {
   ArrowRight,
   FileText,
   Check,
-  History,
   Bell,
   User,
   CalendarDays,
@@ -35,21 +34,44 @@ export default function SpotCheck() {
 
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const listRef = useRef<HTMLDivElement>(null)
 
   const [resultFilter, setResultFilter] = useState<ResultFilter>(
     (searchParams.get('result') as ResultFilter) || '全部'
   )
   const [selectedCheck, setSelectedCheck] = useState<string | null>(searchParams.get('expand') || null)
   const [storeFilter, setStoreFilter] = useState(searchParams.get('store') || '全部')
-  const [justCreatedAnomaly, setJustCreatedAnomaly] = useState<string | null>(null)
+  const [justCreatedAnomaly, setJustCreatedAnomaly] = useState<string | null>(
+    searchParams.get('created') || null
+  )
 
   useEffect(() => {
     const params: Record<string, string> = {}
     if (resultFilter !== '全部') params.result = resultFilter
     if (storeFilter !== '全部') params.store = storeFilter
     if (selectedCheck) params.expand = selectedCheck
+    if (justCreatedAnomaly) params.created = justCreatedAnomaly
     setSearchParams(params, { replace: true })
-  }, [resultFilter, storeFilter, selectedCheck, setSearchParams])
+  }, [resultFilter, storeFilter, selectedCheck, justCreatedAnomaly, setSearchParams])
+
+  useEffect(() => {
+    if (justCreatedAnomaly && selectedCheck) {
+      const el = document.getElementById(`spotcheck-${selectedCheck}`)
+      if (el) {
+        setTimeout(() => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 100)
+      }
+    }
+  }, [justCreatedAnomaly, selectedCheck])
+
+  useEffect(() => {
+    if (!justCreatedAnomaly) return
+    const timer = setTimeout(() => {
+      setJustCreatedAnomaly(null)
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [justCreatedAnomaly])
 
   const stores = ['全部', ...Array.from(new Set(spotchecks.map((s) => s.storeName)))]
 
@@ -59,16 +81,29 @@ export default function SpotCheck() {
     return true
   })
 
+  const buildReturnParams = useCallback(() => {
+    const params: Record<string, string> = {}
+    if (resultFilter !== '全部') params.result = resultFilter
+    if (storeFilter !== '全部') params.store = storeFilter
+    if (selectedCheck) params.expand = selectedCheck
+    if (justCreatedAnomaly) params.created = justCreatedAnomaly
+    return new URLSearchParams(params).toString()
+  }, [resultFilter, storeFilter, selectedCheck, justCreatedAnomaly])
+
   const handleCreateAnomaly = (check: SpotCheck) => {
+    const returnParams = buildReturnParams()
+    const returnTo = returnParams ? `&returnTo=${encodeURIComponent(returnParams)}` : ''
     if (check.anomalyIds && check.anomalyIds.length > 0) {
-      navigate(`/anomaly/${check.anomalyIds[0]}?from=spotcheck`)
+      navigate(`/anomaly/${check.anomalyIds[0]}?from=spotcheck${returnTo}`)
       return
     }
     const newAnomaly = createSpotCheckAnomaly(check.id)
     if (newAnomaly) {
       setJustCreatedAnomaly(newAnomaly.id)
       setTimeout(() => {
-        navigate(`/anomaly/${newAnomaly.id}?from=spotcheck`)
+        const updatedParams = buildReturnParams()
+        const updatedReturnTo = updatedParams ? `&returnTo=${encodeURIComponent(updatedParams)}` : ''
+        navigate(`/anomaly/${newAnomaly.id}?from=spotcheck${updatedReturnTo}`)
       }, 800)
     }
   }
@@ -79,6 +114,10 @@ export default function SpotCheck() {
   }
 
   const resultButtons: ResultFilter[] = ['全部', '合规', '不合规', '待关注']
+
+  const toggleExpand = useCallback((checkId: string) => {
+    setSelectedCheck(prev => prev === checkId ? null : checkId)
+  }, [])
 
   return (
     <div className="min-h-screen bg-[#F8F9FC] p-6 font-['Noto_Sans_SC']">
@@ -123,7 +162,7 @@ export default function SpotCheck() {
         <span className="ml-auto text-sm text-[#1B2A4A]/50">近30天</span>
       </div>
 
-      <div className="grid gap-4">
+      <div className="grid gap-4" ref={listRef}>
         {filtered.map((check) => {
           const cfg = resultConfig[check.result]
           const expanded = selectedCheck === check.id
@@ -132,8 +171,9 @@ export default function SpotCheck() {
           return (
             <div
               key={check.id}
-              onClick={() => setSelectedCheck(expanded ? null : check.id)}
-              className="cursor-pointer rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md"
+              id={`spotcheck-${check.id}`}
+              onClick={() => toggleExpand(check.id)}
+              className={`cursor-pointer rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md ${isJustCreated ? 'ring-2 ring-emerald-400 ring-offset-2' : ''}`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">

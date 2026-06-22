@@ -4,12 +4,13 @@ import { spotchecks as initialSpotchecks } from '@/data/spotchecks'
 import { reports as initialReports } from '@/data/reports'
 import { stores } from '@/data/stores'
 import { assistants } from '@/data/assistants'
-import type { Anomaly, SpotCheck, MonthlyReport, RectificationTask, Attachment, TaskHistoryItem, ReportScope } from '@/types'
+import type { Anomaly, SpotCheck, MonthlyReport, RectificationTask, Attachment, TaskHistoryItem, ReportScope, ReminderRecord, RiskStore, TrackingItem } from '@/types'
 
 interface AppState {
   anomalies: Anomaly[]
   spotchecks: SpotCheck[]
   reports: MonthlyReport[]
+  reminders: ReminderRecord[]
 
   addAnomaly: (data: Omit<Anomaly, 'id' | 'createdAt' | 'rectificationTasks' | 'urgency'> & {
     assignee: string
@@ -26,6 +27,8 @@ interface AppState {
   rejectRectification: (anomalyId: string, taskId: string, reviewNote: string) => void
 
   createSpotCheckAnomaly: (spotCheckId: string) => Anomaly | null
+
+  addReminder: (anomalyIds: string[], note: string) => ReminderRecord
 
   generateMonthlyReport: (month: string, scope?: ReportScope, regenerate?: boolean) => MonthlyReport
 
@@ -94,6 +97,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   anomalies: initialAnomalies,
   spotchecks: initialSpotchecks,
   reports: initialReports,
+  reminders: [],
 
   getAnomalyById: (id) => get().anomalies.find(a => a.id === id),
 
@@ -246,6 +250,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     return newAnomaly
   },
 
+  addReminder: (anomalyIds, note) => {
+    const id = generateId('rm')
+    const timestamp = getNowStr()
+    const reminder: ReminderRecord = {
+      id,
+      anomalyIds,
+      operator: '质控专员',
+      timestamp,
+      note,
+    }
+    set({
+      reminders: [...get().reminders, reminder],
+      anomalies: get().anomalies.map(a => {
+        if (!anomalyIds.includes(a.id)) return a
+        return {
+          ...a,
+          rectificationTasks: a.rectificationTasks.map(t => {
+            if (t.status === 'approved') return t
+            return {
+              ...t,
+              history: [...t.history, makeHistory('reminded', '质控专员', '质控', note)],
+            }
+          }),
+        }
+      }),
+    })
+    return reminder
+  },
+
   generateMonthlyReport: (month, scope = {}, regenerate = false) => {
     const { anomalies, reports } = get()
 
@@ -343,6 +376,39 @@ export const useAppStore = create<AppState>((set, get) => ({
       .slice(0, 2)
       .map(s => s.name)
 
+    const riskStores: RiskStore[] = sortedStores.slice(0, 3).map(s => {
+      const storeAnomalyCount = scopeAnomalies.filter(a => a.storeId === s.id).length
+      const reasons: string[] = []
+      if (s.completionRate < 85) reasons.push('完成率低于85%')
+      if (s.onTimeRate < 85) reasons.push('准点率低于85%')
+      if (s.preCheckOmissionRate > 6) reasons.push('术前核对遗漏率高')
+      if (s.tempMaterialCount > 5) reasons.push('临时补物料频繁')
+      if (storeAnomalyCount > 2) reasons.push('异常数量偏多')
+      return {
+        name: s.name,
+        reason: reasons.length > 0 ? reasons.join('；') : '综合评分偏低',
+        completionRate: s.completionRate,
+        onTimeRate: s.onTimeRate,
+        anomalyCount: storeAnomalyCount,
+      }
+    })
+
+    const trackingItems: TrackingItem[] = scopeAnomalies
+      .filter(a => a.status !== 'closed')
+      .sort((a, b) => {
+        const da = new Date(a.deadline).getTime() - new Date().getTime()
+        const db = new Date(b.deadline).getTime() - new Date().getTime()
+        return da - db
+      })
+      .slice(0, 8)
+      .map(a => ({
+        title: a.title,
+        storeName: a.storeName,
+        deadline: a.deadline,
+        status: a.status === 'pending' ? '待处理' : '处理中',
+        assignee: a.rectificationTasks[0]?.assignee || '未分配',
+      }))
+
     const scopeLabel = scope.region || scope.storeId ? (scope.region || stores.find(s => s.id === scope.storeId)?.name || '') : '全部门店'
     const projectLabel = scope.projectType ? (scope.projectType === 'injection' ? '注射类' : scope.projectType === 'surgery' ? '手术类' : '光电类') : '全部项目'
 
@@ -386,6 +452,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       ],
       trainingSuggestions,
       schedulingSuggestions,
+      riskStores,
+      trackingItems,
     }
 
     if (existing && regenerate) {
