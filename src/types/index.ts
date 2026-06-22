@@ -155,6 +155,7 @@ export interface MetricsComparison {
   avgOnTimeRate: number
   totalAnomalies: number
   closedRate: number
+  isBaseline?: boolean
 }
 
 export interface MonthlyReport {

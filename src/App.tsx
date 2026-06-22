@@ -17,8 +17,10 @@ export default function App() {
           <Route path="quality" element={<Quality />} />
           <Route path="profile" element={<Profile />} />
           <Route path="anomaly" element={<Anomaly />} />
+          <Route path="anomaly/:id" element={<Anomaly />} />
           <Route path="spotcheck" element={<SpotCheck />} />
           <Route path="report" element={<Report />} />
+          <Route path="report/:id" element={<Report />} />
         </Route>
       </Routes>
     </Router>

@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '@/store/useAppStore'
 import { stores } from '@/data/stores'
 import type { MonthlyReport, ReportScope } from '@/types'
@@ -18,6 +19,7 @@ import {
   Filter,
   RefreshCw,
   ChevronDown,
+  Info,
 } from 'lucide-react'
 
 const statusConfig = {
@@ -53,18 +55,26 @@ function DiffBadge({ value, isRate = true, inverse = false }: { value: number; i
   )
 }
 
-function MetricCard({ label, value, unit, highlight, diff, diffInverse }: {
+function MetricCard({ label, value, unit, highlight, diff, diffInverse, isBaseline }: {
   label: string
   value: number | string
   unit?: string
   highlight?: boolean
   diff?: number
   diffInverse?: boolean
+  isBaseline?: boolean
 }) {
   const isRate = unit === '%'
   return (
     <div className={`rounded-xl p-4 shadow-sm border ${highlight ? 'bg-gradient-to-br from-ice-50 to-white border-ice-200' : 'bg-white border-gray-100'}`}>
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs text-gray-500">{label}</p>
+        {isBaseline && (
+          <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
+            <Info className="w-2.5 h-2.5" /> 基线对比
+          </span>
+        )}
+      </div>
       <p className="text-2xl font-bold text-navy-500 font-mono">
         {value}
         {unit && <span className="text-sm font-normal text-gray-400 ml-0.5">{unit}</span>}
@@ -72,7 +82,14 @@ function MetricCard({ label, value, unit, highlight, diff, diffInverse }: {
       {diff !== undefined && (
         <div className="mt-1">
           <DiffBadge value={diff} isRate={isRate} inverse={diffInverse} />
-          <span className="text-xs text-gray-400 ml-1">环比</span>
+          <span className="text-xs text-gray-400 ml-1">{isBaseline ? '较基线' : '环比'}</span>
+          {diff !== 0 && (
+            <span className={`text-xs ml-1 ${
+              (diffInverse ? diff < 0 : diff > 0) ? 'text-emerald-500' : 'text-red-500'
+            }`}>
+              {(diffInverse ? diff < 0 : diff > 0) ? '变好' : '变差'}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -165,6 +182,11 @@ function ReportList({
                   <span className="text-xs text-navy-200 bg-gray-50 px-2 py-0.5 rounded-full">
                     {getScopeText(report.scope)}
                   </span>
+                  {report.comparison?.isBaseline && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
+                      <Info className="w-2.5 h-2.5" /> 基线对比
+                    </span>
+                  )}
                 </div>
                 <span className="text-xs text-gray-400">生成于 {report.generatedAt}</span>
               </div>
@@ -214,8 +236,11 @@ function ReportList({
 }
 
 function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () => void }) {
-  const cfg = statusConfig[report.status]
-  const cmp = report.comparison
+  const liveReports = useAppStore((s) => s.reports)
+  const liveReport = liveReports.find(r => r.id === report.id) || report
+
+  const cfg = statusConfig[liveReport.status]
+  const cmp = liveReport.comparison
 
   return (
     <div className="space-y-6">
@@ -224,17 +249,22 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
           <button onClick={onBack} className="flex items-center gap-1 text-sm text-navy-300 hover:text-navy-500 transition-colors">
             <ArrowLeft className="w-4 h-4" /> 返回列表
           </button>
-          <h2 className="text-xl font-bold text-navy-500">{report.month} 月报</h2>
+          <h2 className="text-xl font-bold text-navy-500">{liveReport.month} 月报</h2>
           <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${cfg.bg} ${cfg.text}`}>
             {cfg.label}
           </span>
           <span className="text-xs text-navy-200 bg-gray-50 px-2 py-0.5 rounded-full">
-            {getScopeText(report.scope)}
+            {getScopeText(liveReport.scope)}
           </span>
+          {cmp?.isBaseline && (
+            <span className="inline-flex items-center gap-0.5 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded">
+              <Info className="w-3 h-3" /> 基于历史趋势基线对比
+            </span>
+          )}
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => downloadHtmlReport(report, useAppStore.getState().exportReportAsHtml)}
+            onClick={() => downloadHtmlReport(liveReport, useAppStore.getState().exportReportAsHtml)}
             className="flex items-center gap-1.5 text-sm bg-navy-500 text-white px-4 py-2 rounded-6 hover:bg-navy-400 transition-colors"
           >
             <Download className="w-4 h-4" />
@@ -247,13 +277,13 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
         <h3 className="text-sm font-semibold text-navy-500 mb-3 flex items-center gap-2">
           <span className="w-1 h-4 bg-ice-400 rounded-full"></span>
           关键指标
-          {cmp && <span className="text-xs font-normal text-navy-200">（与上月对比）</span>}
+          {cmp && <span className="text-xs font-normal text-navy-200">（{cmp.isBaseline ? '与基线对比' : '与上月对比'}）</span>}
         </h3>
         <div className="grid grid-cols-4 gap-3">
-          <MetricCard label="平均完成率" value={report.keyMetrics.avgCompletionRate} unit="%" highlight diff={cmp?.avgCompletionRate} />
-          <MetricCard label="平均准点率" value={report.keyMetrics.avgOnTimeRate} unit="%" diff={cmp?.avgOnTimeRate} />
-          <MetricCard label="异常总数" value={report.keyMetrics.totalAnomalies} diff={cmp?.totalAnomalies} diffInverse />
-          <MetricCard label="闭环率" value={report.keyMetrics.closedRate} unit="%" diff={cmp?.closedRate} />
+          <MetricCard label="平均完成率" value={liveReport.keyMetrics.avgCompletionRate} unit="%" highlight diff={cmp?.avgCompletionRate} isBaseline={cmp?.isBaseline} />
+          <MetricCard label="平均准点率" value={liveReport.keyMetrics.avgOnTimeRate} unit="%" diff={cmp?.avgOnTimeRate} isBaseline={cmp?.isBaseline} />
+          <MetricCard label="异常总数" value={liveReport.keyMetrics.totalAnomalies} diff={cmp?.totalAnomalies} diffInverse isBaseline={cmp?.isBaseline} />
+          <MetricCard label="闭环率" value={liveReport.keyMetrics.closedRate} unit="%" diff={cmp?.closedRate} isBaseline={cmp?.isBaseline} />
         </div>
       </section>
 
@@ -272,7 +302,7 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
               </tr>
             </thead>
             <tbody>
-              {report.anomalySummary.map((item) => (
+              {liveReport.anomalySummary.map((item) => (
                 <tr key={item.category} className="border-t border-gray-100">
                   <td className="px-4 py-2.5 text-navy-500 font-medium">{item.category}</td>
                   <td className="px-4 py-2.5 text-center font-mono">{item.count}</td>
@@ -299,7 +329,7 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
           培训建议
         </h3>
         <div className="space-y-2">
-          {report.trainingSuggestions.map((s, i) => (
+          {liveReport.trainingSuggestions.map((s, i) => (
             <div key={i} className="flex items-start gap-3 bg-white rounded-xl p-4 shadow-sm border border-gray-100">
               <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-50 text-amber-600 text-xs font-bold flex items-center justify-center">
                 {i + 1}
@@ -316,7 +346,7 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
           排班建议
         </h3>
         <div className="space-y-2">
-          {report.schedulingSuggestions.map((s, i) => (
+          {liveReport.schedulingSuggestions.map((s, i) => (
             <div key={i} className="flex items-start gap-3 bg-white rounded-xl p-4 shadow-sm border border-gray-100">
               <span className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-50 text-ice-400 text-xs font-bold flex items-center justify-center">
                 {i + 1}
@@ -328,13 +358,15 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
       </section>
 
       <div className="pt-4 border-t border-gray-100 text-xs text-navy-200 text-center">
-        生成时间：{report.generatedAt} &middot; 跟台质量复盘平台
+        生成时间：{liveReport.generatedAt} &middot; 跟台质量复盘平台
       </div>
     </div>
   )
 }
 
 export default function Report() {
+  const { id: paramId } = useParams()
+  const navigate = useNavigate()
   const reports = useAppStore((s) => s.reports)
   const generateMonthlyReport = useAppStore((s) => s.generateMonthlyReport)
 
@@ -347,6 +379,15 @@ export default function Report() {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   }, [])
+
+  useEffect(() => {
+    if (paramId) {
+      const report = reports.find((r) => r.id === paramId)
+      if (report) {
+        setSelectedReport(report)
+      }
+    }
+  }, [paramId, reports])
 
   const scope: ReportScope = useMemo(() => {
     const s: ReportScope = {}
@@ -369,6 +410,7 @@ export default function Report() {
   const handleGenerate = () => {
     const report = generateMonthlyReport(currentMonth, scope, false)
     setSelectedReport(report)
+    navigate(`/report/${report.id}`)
   }
 
   const handleRegenerate = () => {
@@ -379,6 +421,16 @@ export default function Report() {
   const displayReport = selectedReport
     ? reports.find((r) => r.id === selectedReport.id) || selectedReport
     : null
+
+  const handleSelect = (r: MonthlyReport) => {
+    setSelectedReport(r)
+    navigate(`/report/${r.id}`)
+  }
+
+  const handleBack = () => {
+    setSelectedReport(null)
+    navigate('/report')
+  }
 
   const handleRegionChange = (val: string) => {
     setScopeRegion(val)
@@ -444,11 +496,11 @@ export default function Report() {
       )}
 
       {displayReport ? (
-        <ReportDetail report={displayReport} onBack={() => setSelectedReport(null)} />
+        <ReportDetail report={displayReport} onBack={handleBack} />
       ) : (
         <ReportList
           reports={sortedReports}
-          onSelect={setSelectedReport}
+          onSelect={handleSelect}
           onGenerate={handleGenerate}
           onRegenerate={handleRegenerate}
           scope={scope}

@@ -1,13 +1,16 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppStore } from '@/store/useAppStore'
 import { stores } from '@/data/stores'
 import { assistants } from '@/data/assistants'
 import type { Anomaly as AnomalyType, Attachment, TaskStatus } from '@/types'
 import {
   Clock, Loader, CheckCircle2, AlertTriangle, Eye, X, FileText, Plus, Upload, Send, Check, XCircle,
-  History, AlertOctagon, Bell, ChevronRight, Paperclip, User, Calendar } from 'lucide-react'
+  History, AlertOctagon, Bell, ChevronRight, Paperclip, User, Calendar, ArrowLeft,
+  Users, CalendarDays, ChevronDown, ChevronUp } from 'lucide-react'
 
 type StatusFilter = 'all' | 'pending' | 'processing' | 'closed' | 'urgent' | 'overdue'
+type GroupBy = 'none' | 'assignee' | 'days'
 
 const statusConfig = {
   pending: { label: '待处理', bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-l-amber-400', icon: Clock },
@@ -35,20 +38,44 @@ const historyStatusLabel: Record<TaskStatus, string> = {
   rejected: '审批驳回',
 }
 
+const getDaysRemaining = (deadline: string): number => {
+  const today = new Date(new Date().toISOString().slice(0, 10))
+  const dl = new Date(deadline)
+  return Math.ceil((dl.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+const getDaysGroup = (days: number): string => {
+  if (days < 0) return '已逾期'
+  if (days === 0) return '今日到期'
+  if (days <= 1) return '1天内到期'
+  if (days <= 3) return '2-3天内到期'
+  if (days <= 7) return '4-7天内到期'
+  return '7天以上'
+}
+
+const daysGroupOrder = ['已逾期', '今日到期', '1天内到期', '2-3天内到期', '4-7天内到期', '7天以上']
+
 export default function Anomaly() {
+  const { id: paramId } = useParams()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const fromSpotCheck = searchParams.get('from') === 'spotcheck'
+
   const anomalies = useAppStore((s) => s.anomalies)
   const addAnomaly = useAppStore((s) => s.addAnomaly)
   const submitRectification = useAppStore((s) => s.submitRectification)
   const approveRectification = useAppStore((s) => s.approveRectification)
   const rejectRectification = useAppStore((s) => s.rejectRectification)
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(fromSpotCheck ? 'all' : 'all')
   const [selectedAnomaly, setSelectedAnomaly] = useState<AnomalyType | null>(null)
   const [showDetail, setShowDetail] = useState(false)
   const [showNewModal, setShowNewModal] = useState(false)
   const [showSubmitModal, setShowSubmitModal] = useState(false)
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<'tasks' | 'timeline'>('tasks')
+  const [groupBy, setGroupBy] = useState<GroupBy>('none')
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const [newForm, setNewForm] = useState({
     title: '',
@@ -64,12 +91,61 @@ export default function Anomaly() {
   const [submitFiles, setSubmitFiles] = useState<Attachment[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    if (paramId) {
+      const anomaly = anomalies.find((a) => a.id === paramId)
+      if (anomaly) {
+        setSelectedAnomaly(anomaly)
+        setShowDetail(true)
+        setDetailTab('tasks')
+      }
+    }
+  }, [paramId, anomalies])
+
+  const handleBack = () => {
+    if (fromSpotCheck) {
+      navigate('/spotcheck')
+    } else {
+      setShowDetail(false)
+      setSelectedAnomaly(null)
+      navigate('/anomaly')
+    }
+  }
+
   const filtered = useMemo(() => {
-    if (statusFilter === 'all') return anomalies
-    if (statusFilter === 'urgent') return anomalies.filter(a => a.urgency === 'soon' || a.urgency === 'overdue')
-    if (statusFilter === 'overdue') return anomalies.filter(a => a.urgency === 'overdue')
-    return anomalies.filter((a) => a.status === statusFilter)
+    let list = anomalies
+    if (statusFilter === 'all') list = anomalies
+    else if (statusFilter === 'urgent') list = anomalies.filter(a => a.urgency === 'soon' || a.urgency === 'overdue')
+    else if (statusFilter === 'overdue') list = anomalies.filter(a => a.urgency === 'overdue')
+    else list = anomalies.filter((a) => a.status === statusFilter)
+    return [...list].sort((a, b) => {
+      const da = getDaysRemaining(a.deadline)
+      const db = getDaysRemaining(b.deadline)
+      return da - db
+    })
   }, [statusFilter, anomalies])
+
+  const groupedData = useMemo(() => {
+    if (groupBy === 'none' || statusFilter !== 'urgent') {
+      return [{ key: 'all', label: '', items: filtered }]
+    }
+    const groups: Record<string, AnomalyType[]> = {}
+    filtered.forEach(a => {
+      let key: string
+      if (groupBy === 'assignee') {
+        const task = a.rectificationTasks[0]
+        key = task?.assignee || '未分配'
+      } else {
+        key = getDaysGroup(getDaysRemaining(a.deadline))
+      }
+      if (!groups[key]) groups[key] = []
+      groups[key].push(a)
+    })
+    const keys = groupBy === 'days'
+      ? daysGroupOrder.filter(k => groups[k])
+      : Object.keys(groups).sort()
+    return keys.map(k => ({ key: k, label: k, items: groups[k] }))
+  }, [filtered, groupBy, statusFilter])
 
   const counts = useMemo(
     () => ({
@@ -94,6 +170,7 @@ export default function Anomaly() {
     setSelectedAnomaly(a)
     setShowDetail(true)
     setDetailTab('tasks')
+    navigate(`/anomaly/${a.id}`)
   }
 
   const currentAnomaly = selectedAnomaly
@@ -190,145 +267,303 @@ export default function Anomaly() {
     return items.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
   }, [currentAnomaly])
 
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleAllGroups = () => {
+    if (expandedGroups.size === groupedData.length) {
+      setExpandedGroups(new Set())
+    } else {
+      setExpandedGroups(new Set(groupedData.map(g => g.key)))
+    }
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-navy-500">异常闭环</h1>
-          <p className="text-navy-200 text-sm mt-1">问题发现、整改派发与闭环追踪</p>
+          <div className="flex items-center gap-3">
+            {fromSpotCheck && showDetail && (
+              <button onClick={handleBack} className="text-navy-300 hover:text-navy-500">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <h1 className="text-2xl font-bold text-navy-500">异常闭环</h1>
+          </div>
+          <p className="text-navy-200 text-sm mt-1 ml-8">问题发现、整改派发与闭环追踪</p>
         </div>
-        <button
-          onClick={() => setShowNewModal(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-ice-400 text-white text-sm font-medium rounded-6 hover:bg-ice-500 transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" /> 新建整改任务
-        </button>
+        {!showDetail && (
+          <button
+            onClick={() => setShowNewModal(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-ice-400 text-white text-sm font-medium rounded-6 hover:bg-ice-500 transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> 新建整改任务
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
-        <div
-          className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.pending.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
-          onClick={() => setStatusFilter('pending')}
-        >
-          <div className={`w-10 h-10 rounded-lg ${statusConfig.pending.bg} ${statusConfig.pending.text} flex items-center justify-center`}>
-            <Clock className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-2xl font-mono font-bold text-navy-500">{counts.pending}</p>
-            <p className="text-xs text-navy-200">待处理</p>
-          </div>
-        </div>
-        <div
-          className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.processing.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
-          onClick={() => setStatusFilter('processing')}
-        >
-          <div className={`w-10 h-10 rounded-lg ${statusConfig.processing.bg} ${statusConfig.processing.text} flex items-center justify-center`}>
-            <Loader className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-2xl font-mono font-bold text-navy-500">{counts.processing}</p>
-            <p className="text-xs text-navy-200">处理中</p>
-          </div>
-        </div>
-        <div
-          className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.closed.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
-          onClick={() => setStatusFilter('closed')}
-        >
-          <div className={`w-10 h-10 rounded-lg ${statusConfig.closed.bg} ${statusConfig.closed.text} flex items-center justify-center`}>
-            <CheckCircle2 className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-2xl font-mono font-bold text-navy-500">{counts.closed}</p>
-            <p className="text-xs text-navy-200">已闭环</p>
-          </div>
-        </div>
-        <div
-          className="bg-white rounded-lg shadow-sm border-l-4 border-l-red-400 p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer"
-          onClick={() => setStatusFilter('urgent')}
-        >
-          <div className="w-10 h-10 rounded-lg bg-red-50 text-red-500 flex items-center justify-center">
-            <Bell className="w-5 h-5" />
-          </div>
-          <div>
-            <p className="text-2xl font-mono font-bold text-navy-500">{counts.urgent}</p>
-            <p className="text-xs text-navy-200">需关注（含逾期 {counts.overdue}）</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm">
-        <div className="flex border-b border-gray-100 px-4">
-          {tabs.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setStatusFilter(tab.value)}
-              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                statusFilter === tab.value
-                  ? 'border-ice-400 text-ice-500'
-                  : 'border-transparent text-navy-200 hover:text-navy-400'
-              }`}
+      {!showDetail && (
+        <>
+          <div className="grid grid-cols-4 gap-4">
+            <div
+              className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.pending.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
+              onClick={() => setStatusFilter('pending')}
             >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+              <div className={`w-10 h-10 rounded-lg ${statusConfig.pending.bg} ${statusConfig.pending.text} flex items-center justify-center`}>
+                <Clock className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-mono font-bold text-navy-500">{counts.pending}</p>
+                <p className="text-xs text-navy-200">待处理</p>
+              </div>
+            </div>
+            <div
+              className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.processing.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
+              onClick={() => setStatusFilter('processing')}
+            >
+              <div className={`w-10 h-10 rounded-lg ${statusConfig.processing.bg} ${statusConfig.processing.text} flex items-center justify-center`}>
+                <Loader className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-mono font-bold text-navy-500">{counts.processing}</p>
+                <p className="text-xs text-navy-200">处理中</p>
+              </div>
+            </div>
+            <div
+              className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.closed.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
+              onClick={() => setStatusFilter('closed')}
+            >
+              <div className={`w-10 h-10 rounded-lg ${statusConfig.closed.bg} ${statusConfig.closed.text} flex items-center justify-center`}>
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-mono font-bold text-navy-500">{counts.closed}</p>
+                <p className="text-xs text-navy-200">已闭环</p>
+              </div>
+            </div>
+            <div
+              className="bg-white rounded-lg shadow-sm border-l-4 border-l-red-400 p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => setStatusFilter('urgent')}
+            >
+              <div className="w-10 h-10 rounded-lg bg-red-50 text-red-500 flex items-center justify-center">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-mono font-bold text-navy-500">{counts.urgent}</p>
+                <p className="text-xs text-navy-200">需关注（含逾期 {counts.overdue}）</p>
+              </div>
+            </div>
+          </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-navy-200 text-xs border-b border-gray-50">
-                <th className="px-4 py-3 font-medium">异常标题</th>
-                <th className="px-4 py-3 font-medium">门店</th>
-                <th className="px-4 py-3 font-medium">项目类别</th>
-                <th className="px-4 py-3 font-medium">状态</th>
-                <th className="px-4 py-3 font-medium">截止日期</th>
-                <th className="px-4 py-3 font-medium">紧急度</th>
-                <th className="px-4 py-3 font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((a) => {
-                const sc = statusConfig[a.status]
-                const uc = urgencyConfig[a.urgency || 'normal']
-                return (
-                  <tr key={a.id} className="border-b border-gray-50 hover:bg-surface-hover transition-colors">
-                    <td className="px-4 py-3 font-medium text-navy-500">{a.title}</td>
-                    <td className="px-4 py-3 text-navy-300">{a.storeName}</td>
-                    <td className="px-4 py-3 text-navy-300">{a.projectName}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${sc.bg} ${sc.text}`}>
-                        {sc.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-navy-300 font-mono text-xs">{a.deadline}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${uc.bg} ${uc.text}`}>
-                        {a.urgency === 'overdue' && <AlertOctagon className="w-3 h-3" />}
-                        {a.urgency === 'soon' && <Clock className="w-3 h-3" />}
-                        {uc.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => openDetail(a)} className="text-ice-400 hover:underline inline-flex items-center gap-1 text-xs">
-                        <Eye className="w-3.5 h-3.5" />查看详情
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-navy-200 text-sm">暂无数据</td>
-                </tr>
+          <div className="bg-white rounded-lg shadow-sm">
+            <div className="flex border-b border-gray-100 px-4 items-center justify-between">
+              <div className="flex">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.value}
+                    onClick={() => { setStatusFilter(tab.value); setExpandedGroups(new Set()) }}
+                    className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                      statusFilter === tab.value
+                        ? 'border-ice-400 text-ice-500'
+                        : 'border-transparent text-navy-200 hover:text-navy-400'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              {statusFilter === 'urgent' && (
+                <div className="flex items-center gap-2 px-4">
+                  <span className="text-xs text-navy-200">分组：</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setGroupBy('none')}
+                      className={`text-xs px-2.5 py-1 rounded transition-colors ${
+                        groupBy === 'none' ? 'bg-ice-100 text-ice-600' : 'bg-gray-100 text-navy-300 hover:bg-gray-200'
+                      }`}
+                    >
+                      无
+                    </button>
+                    <button
+                      onClick={() => setGroupBy('assignee')}
+                      className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded transition-colors ${
+                        groupBy === 'assignee' ? 'bg-ice-100 text-ice-600' : 'bg-gray-100 text-navy-300 hover:bg-gray-200'
+                      }`}
+                    >
+                      <Users className="w-3 h-3" /> 按负责人
+                    </button>
+                    <button
+                      onClick={() => setGroupBy('days')}
+                      className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded transition-colors ${
+                        groupBy === 'days' ? 'bg-ice-100 text-ice-600' : 'bg-gray-100 text-navy-300 hover:bg-gray-200'
+                      }`}
+                    >
+                      <CalendarDays className="w-3 h-3" /> 按剩余天数
+                    </button>
+                  </div>
+                  {groupBy !== 'none' && (
+                    <button onClick={toggleAllGroups} className="text-xs text-ice-500 hover:text-ice-600">
+                      {expandedGroups.size === groupedData.length ? '全部收起' : '全部展开'}
+                    </button>
+                  )}
+                </div>
               )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              {groupBy !== 'none' && statusFilter === 'urgent' ? (
+                <div className="p-4 space-y-4">
+                  {groupedData.map((group) => {
+                    const isExpanded = expandedGroups.has(group.key)
+                    const overdueCount = group.items.filter(a => a.urgency === 'overdue').length
+                    const soonCount = group.items.filter(a => a.urgency === 'soon').length
+                    return (
+                      <div key={group.key} className="border border-gray-100 rounded-lg overflow-hidden">
+                        <div
+                          onClick={() => toggleGroup(group.key)}
+                          className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            {groupBy === 'assignee' ? (
+                              <div className="w-8 h-8 rounded-full bg-ice-100 text-ice-600 flex items-center justify-center">
+                                <User className="w-4 h-4" />
+                              </div>
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center">
+                                <Clock className="w-4 h-4" />
+                              </div>
+                            )}
+                            <span className="font-medium text-navy-500">{group.label}</span>
+                            <span className="text-xs text-navy-200">共 {group.items.length} 项</span>
+                            {overdueCount > 0 && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-600">
+                                逾期 {overdueCount}
+                              </span>
+                            )}
+                            {soonCount > 0 && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-600">
+                                即将到期 {soonCount}
+                              </span>
+                            )}
+                          </div>
+                          {isExpanded ? <ChevronUp className="w-4 h-4 text-navy-300" /> : <ChevronDown className="w-4 h-4 text-navy-300" />}
+                        </div>
+                        {isExpanded && (
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-navy-200 text-xs border-b border-gray-50 bg-gray-50/50">
+                                <th className="px-4 py-2 font-medium">异常标题</th>
+                                <th className="px-4 py-2 font-medium">门店</th>
+                                <th className="px-4 py-2 font-medium">项目类别</th>
+                                <th className="px-4 py-2 font-medium">状态</th>
+                                <th className="px-4 py-2 font-medium">截止日期</th>
+                                <th className="px-4 py-2 font-medium">剩余天数</th>
+                                <th className="px-4 py-2 font-medium">操作</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.items.map((a) => {
+                                const sc = statusConfig[a.status]
+                                const uc = urgencyConfig[a.urgency || 'normal']
+                                const days = getDaysRemaining(a.deadline)
+                                return (
+                                  <tr key={a.id} className="border-b border-gray-50 hover:bg-surface-hover transition-colors">
+                                    <td className="px-4 py-3 font-medium text-navy-500">{a.title}</td>
+                                    <td className="px-4 py-3 text-navy-300">{a.storeName}</td>
+                                    <td className="px-4 py-3 text-navy-300">{a.projectName}</td>
+                                    <td className="px-4 py-3">
+                                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${sc.bg} ${sc.text}`}>
+                                        {sc.label}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-navy-300 font-mono text-xs">{a.deadline}</td>
+                                    <td className="px-4 py-3">
+                                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${uc.bg} ${uc.text}`}>
+                                        {days < 0 && <AlertOctagon className="w-3 h-3" />}
+                                        {days >= 0 && days <= 3 && <Clock className="w-3 h-3" />}
+                                        {days < 0 ? `逾期 ${Math.abs(days)} 天` : days === 0 ? '今日到期' : `${days} 天`}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <button onClick={() => openDetail(a)} className="text-ice-400 hover:underline inline-flex items-center gap-1 text-xs">
+                                        <Eye className="w-3.5 h-3.5" />查看详情
+                                      </button>
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-navy-200 text-xs border-b border-gray-50">
+                      <th className="px-4 py-3 font-medium">异常标题</th>
+                      <th className="px-4 py-3 font-medium">门店</th>
+                      <th className="px-4 py-3 font-medium">项目类别</th>
+                      <th className="px-4 py-3 font-medium">状态</th>
+                      <th className="px-4 py-3 font-medium">截止日期</th>
+                      <th className="px-4 py-3 font-medium">紧急度</th>
+                      <th className="px-4 py-3 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((a) => {
+                      const sc = statusConfig[a.status]
+                      const uc = urgencyConfig[a.urgency || 'normal']
+                      return (
+                        <tr key={a.id} className="border-b border-gray-50 hover:bg-surface-hover transition-colors">
+                          <td className="px-4 py-3 font-medium text-navy-500">{a.title}</td>
+                          <td className="px-4 py-3 text-navy-300">{a.storeName}</td>
+                          <td className="px-4 py-3 text-navy-300">{a.projectName}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${sc.bg} ${sc.text}`}>
+                              {sc.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-navy-300 font-mono text-xs">{a.deadline}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${uc.bg} ${uc.text}`}>
+                              {a.urgency === 'overdue' && <AlertOctagon className="w-3 h-3" />}
+                              {a.urgency === 'soon' && <Clock className="w-3 h-3" />}
+                              {uc.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <button onClick={() => openDetail(a)} className="text-ice-400 hover:underline inline-flex items-center gap-1 text-xs">
+                              <Eye className="w-3.5 h-3.5" />查看详情
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {filtered.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-10 text-center text-navy-200 text-sm">暂无数据</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* 详情弹窗 */}
       {showDetail && currentAnomaly && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={() => setShowDetail(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={handleBack}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
               <div className="flex items-center gap-2">
@@ -343,7 +578,7 @@ export default function Anomaly() {
                   </span>
                 )}
               </div>
-              <button onClick={() => setShowDetail(false)} className="text-navy-200 hover:text-navy-400">
+              <button onClick={handleBack} className="text-navy-200 hover:text-navy-400">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -498,10 +733,10 @@ export default function Anomaly() {
 
             <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-gray-100 flex-shrink-0">
               <button
-                onClick={() => setShowDetail(false)}
+                onClick={handleBack}
                 className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-navy-300 hover:bg-gray-200 transition-colors"
               >
-                关闭
+                {fromSpotCheck ? '返回抽查记录' : '关闭'}
               </button>
             </div>
           </div>
