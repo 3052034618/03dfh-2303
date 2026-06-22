@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useAppStore } from '@/store/useAppStore'
-import type { MonthlyReport } from '@/types'
+import { stores } from '@/data/stores'
+import type { MonthlyReport, ReportScope } from '@/types'
 import {
   FileBarChart,
   Download,
@@ -14,6 +15,9 @@ import {
   ArrowLeft,
   Plus,
   FileText,
+  Filter,
+  RefreshCw,
+  ChevronDown,
 } from 'lucide-react'
 
 const statusConfig = {
@@ -27,7 +31,37 @@ const trendIcon = (trend: string) => {
   return <Minus className="w-3.5 h-3.5 text-gray-400" />
 }
 
-function MetricCard({ label, value, unit, highlight }: { label: string; value: number | string; unit?: string; highlight?: boolean }) {
+const regions = ['全部区域', ...Array.from(new Set(stores.map(s => s.region)))]
+
+function DiffBadge({ value, isRate = true, inverse = false }: { value: number; isRate?: boolean; inverse?: boolean }) {
+  if (value === 0) {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-xs text-gray-400">
+        <Minus className="w-3 h-3" /> 持平
+      </span>
+    )
+  }
+  const isGood = inverse ? value < 0 : value > 0
+  const isBad = inverse ? value > 0 : value < 0
+  const color = isGood ? 'text-emerald-500' : isBad ? 'text-red-500' : 'text-gray-400'
+  const icon = value > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />
+  const display = isRate ? `${Math.abs(value)}%` : `${value > 0 ? '+' : ''}${value}`
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-xs ${color}`}>
+      {icon} {display}
+    </span>
+  )
+}
+
+function MetricCard({ label, value, unit, highlight, diff, diffInverse }: {
+  label: string
+  value: number | string
+  unit?: string
+  highlight?: boolean
+  diff?: number
+  diffInverse?: boolean
+}) {
+  const isRate = unit === '%'
   return (
     <div className={`rounded-xl p-4 shadow-sm border ${highlight ? 'bg-gradient-to-br from-ice-50 to-white border-ice-200' : 'bg-white border-gray-100'}`}>
       <p className="text-xs text-gray-500 mb-1">{label}</p>
@@ -35,24 +69,86 @@ function MetricCard({ label, value, unit, highlight }: { label: string; value: n
         {value}
         {unit && <span className="text-sm font-normal text-gray-400 ml-0.5">{unit}</span>}
       </p>
+      {diff !== undefined && (
+        <div className="mt-1">
+          <DiffBadge value={diff} isRate={isRate} inverse={diffInverse} />
+          <span className="text-xs text-gray-400 ml-1">环比</span>
+        </div>
+      )}
     </div>
   )
 }
 
-function ReportList({ reports, onSelect, onGenerate }: { reports: MonthlyReport[]; onSelect: (r: MonthlyReport) => void; onGenerate: () => void }) {
+function getScopeText(scope: ReportScope): string {
+  const parts: string[] = []
+  if (scope.region) parts.push(scope.region)
+  if (scope.storeId) {
+    const store = stores.find(s => s.id === scope.storeId)
+    if (store) parts.push(store.name)
+  }
+  if (scope.projectType) {
+    const map: Record<string, string> = { injection: '注射类', surgery: '手术类', laser: '光电类' }
+    parts.push(map[scope.projectType] || scope.projectType)
+  }
+  return parts.length > 0 ? parts.join(' / ') : '全部范围'
+}
+
+function downloadHtmlReport(report: MonthlyReport, exportFn: (id: string) => string) {
+  const html = exportFn(report.id)
+  if (!html) return
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `跟台质量月报_${report.month}_${getScopeText(report.scope)}.html`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+function ReportList({
+  reports,
+  onSelect,
+  onGenerate,
+  onRegenerate,
+  scope,
+  currentMonth,
+}: {
+  reports: MonthlyReport[]
+  onSelect: (r: MonthlyReport) => void
+  onGenerate: () => void
+  onRegenerate: () => void
+  scope: ReportScope
+  currentMonth: string
+}) {
+  const scopeKey = JSON.stringify(scope)
+  const scopeReports = reports.filter(r => JSON.stringify(r.scope) === scopeKey)
+  const currentReport = scopeReports.find(r => r.month === currentMonth)
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-navy-500">报告列表</h2>
-        <button
-          onClick={onGenerate}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-ice-400 text-white text-sm font-medium rounded-6 hover:bg-ice-500 transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" /> 生成本月报告
-        </button>
+        {currentReport ? (
+          <button
+            onClick={onRegenerate}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white text-sm font-medium rounded-6 hover:bg-emerald-600 transition-colors shadow-sm"
+          >
+            <RefreshCw className="w-4 h-4" /> 重新生成本月
+          </button>
+        ) : (
+          <button
+            onClick={onGenerate}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-ice-400 text-white text-sm font-medium rounded-6 hover:bg-ice-500 transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> 生成本月报告
+          </button>
+        )}
       </div>
+
       <div className="grid gap-4">
-        {reports.map((report) => {
+        {scopeReports.map((report) => {
           const cfg = statusConfig[report.status]
           return (
             <div
@@ -65,6 +161,9 @@ function ReportList({ reports, onSelect, onGenerate }: { reports: MonthlyReport[
                   <span className="text-lg font-bold text-navy-500">{report.month} 月报</span>
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${cfg.bg} ${cfg.text}`}>
                     {cfg.label}
+                  </span>
+                  <span className="text-xs text-navy-200 bg-gray-50 px-2 py-0.5 rounded-full">
+                    {getScopeText(report.scope)}
                   </span>
                 </div>
                 <span className="text-xs text-gray-400">生成于 {report.generatedAt}</span>
@@ -93,7 +192,7 @@ function ReportList({ reports, onSelect, onGenerate }: { reports: MonthlyReport[
                 </button>
                 <span className="text-gray-200">|</span>
                 <button
-                  onClick={() => downloadHtmlReport(report)}
+                  onClick={() => downloadHtmlReport(report, useAppStore.getState().exportReportAsHtml)}
                   className="flex items-center gap-1.5 text-sm text-navy-300 hover:text-navy-500 transition-colors"
                 >
                   <Download className="w-4 h-4" />
@@ -103,123 +202,21 @@ function ReportList({ reports, onSelect, onGenerate }: { reports: MonthlyReport[
             </div>
           )
         })}
+        {scopeReports.length === 0 && (
+          <div className="py-12 text-center text-navy-200 bg-white rounded-xl">
+            <FileText className="w-10 h-10 mx-auto mb-2 text-gray-200" />
+            <p className="text-sm">当前范围暂无报告，点击上方按钮生成本月报告</p>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function downloadHtmlReport(report: MonthlyReport) {
-  const { keyMetrics, anomalySummary, trainingSuggestions, schedulingSuggestions } = report
-
-  const html = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <title>跟台质量月报 - ${report.month}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; background: #F8F9FC; color: #1B2A4A; padding: 40px; }
-    .container { max-width: 960px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 48px; box-shadow: 0 4px 12px rgba(27,42,74,0.08); }
-    h1 { font-size: 28px; color: #1B2A4A; margin-bottom: 8px; }
-    .subtitle { color: #576C95; font-size: 14px; margin-bottom: 32px; }
-    .section-title { font-size: 18px; font-weight: 700; color: #1B2A4A; margin: 32px 0 16px; padding-left: 12px; border-left: 4px solid #4A9EFF; }
-    .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-    .metric-card { background: linear-gradient(135deg, #F0F5FF 0%, #EBF4FF 100%); border-radius: 8px; padding: 20px; }
-    .metric-label { font-size: 13px; color: #576C95; margin-bottom: 8px; }
-    .metric-value { font-size: 28px; font-weight: 700; color: #4A9EFF; font-family: "DM Mono", monospace; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th { background: #F8F9FC; padding: 12px 16px; text-align: left; font-weight: 600; color: #576C95; border-bottom: 2px solid #E2E8F0; }
-    td { padding: 12px 16px; border-bottom: 1px solid #F0F0F5; }
-    .trend-up { color: #EF4444; }
-    .trend-down { color: #22C55E; }
-    .trend-flat { color: #94A3B8; }
-    .suggestion-list { list-style: none; counter-reset: item; }
-    .suggestion-list li { counter-increment: item; padding: 12px 16px 12px 44px; border: 1px solid #E2E8F0; border-radius: 8px; margin-bottom: 8px; position: relative; background: #FAFBFF; }
-    .suggestion-list li::before { content: counter(item); position: absolute; left: 12px; top: 12px; width: 24px; height: 24px; background: #4A9EFF; color: #fff; border-radius: 50%; text-align: center; line-height: 24px; font-size: 12px; font-weight: 700; }
-    .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #E2E8F0; text-align: center; color: #94A3B8; font-size: 12px; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-    .badge-draft { background: #FEF3C7; color: #B45309; }
-    .badge-published { background: #D1FAE5; color: #065F46; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>跟台质量月报</h1>
-    <div class="subtitle">
-      ${report.month} &middot; 生成时间：${report.generatedAt} &nbsp;
-      <span class="badge ${report.status === 'published' ? 'badge-published' : 'badge-draft'}">
-        ${report.status === 'published' ? '已发布' : '草稿'}
-      </span>
-    </div>
-
-    <div class="section-title">关键指标</div>
-    <div class="metrics">
-      <div class="metric-card">
-        <div class="metric-label">跟台完成率</div>
-        <div class="metric-value">${keyMetrics.avgCompletionRate}%</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">准点开台率</div>
-        <div class="metric-value">${keyMetrics.avgOnTimeRate}%</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">异常总数</div>
-        <div class="metric-value">${keyMetrics.totalAnomalies}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">闭环率</div>
-        <div class="metric-value">${keyMetrics.closedRate}%</div>
-      </div>
-    </div>
-
-    <div class="section-title">异常汇总</div>
-    <table>
-      <thead>
-        <tr><th>项目类别</th><th>异常数</th><th>趋势</th></tr>
-      </thead>
-      <tbody>
-        ${anomalySummary.map(item => `
-          <tr>
-            <td>${item.category}</td>
-            <td>${item.count}</td>
-            <td class="${item.trend === '↑' ? 'trend-up' : item.trend === '↓' ? 'trend-down' : 'trend-flat'}">
-              ${item.trend} ${item.trend === '↑' ? '上升' : item.trend === '↓' ? '下降' : '持平'}
-            </td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-
-    <div class="section-title">培训建议</div>
-    <ol class="suggestion-list">
-      ${trainingSuggestions.map(s => `<li>${s}</li>`).join('')}
-    </ol>
-
-    <div class="section-title">排班优化建议</div>
-    <ol class="suggestion-list">
-      ${schedulingSuggestions.map(s => `<li>${s}</li>`).join('')}
-    </ol>
-
-    <div class="footer">
-      跟台质量复盘平台 &middot; 自动生成于 ${report.generatedAt}
-    </div>
-  </div>
-</body>
-</html>`
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `跟台质量月报_${report.month}.html`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
 function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () => void }) {
   const cfg = statusConfig[report.status]
+  const cmp = report.comparison
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -231,11 +228,14 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
           <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${cfg.bg} ${cfg.text}`}>
             {cfg.label}
           </span>
+          <span className="text-xs text-navy-200 bg-gray-50 px-2 py-0.5 rounded-full">
+            {getScopeText(report.scope)}
+          </span>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => downloadHtmlReport(report)}
-            className="flex items-center gap-1.5 text-sm bg-navy-500 text-white px-4 py-2 rounded-6 hover:bg-nav-400 transition-colors"
+            onClick={() => downloadHtmlReport(report, useAppStore.getState().exportReportAsHtml)}
+            className="flex items-center gap-1.5 text-sm bg-navy-500 text-white px-4 py-2 rounded-6 hover:bg-navy-400 transition-colors"
           >
             <Download className="w-4 h-4" />
             下载 HTML
@@ -244,17 +244,24 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
       </div>
 
       <section>
-        <h3 className="text-sm font-semibold text-navy-500 mb-3">关键指标</h3>
+        <h3 className="text-sm font-semibold text-navy-500 mb-3 flex items-center gap-2">
+          <span className="w-1 h-4 bg-ice-400 rounded-full"></span>
+          关键指标
+          {cmp && <span className="text-xs font-normal text-navy-200">（与上月对比）</span>}
+        </h3>
         <div className="grid grid-cols-4 gap-3">
-          <MetricCard label="平均完成率" value={report.keyMetrics.avgCompletionRate} unit="%" highlight />
-          <MetricCard label="平均准点率" value={report.keyMetrics.avgOnTimeRate} unit="%" />
-          <MetricCard label="异常总数" value={report.keyMetrics.totalAnomalies} />
-          <MetricCard label="闭环率" value={report.keyMetrics.closedRate} unit="%" />
+          <MetricCard label="平均完成率" value={report.keyMetrics.avgCompletionRate} unit="%" highlight diff={cmp?.avgCompletionRate} />
+          <MetricCard label="平均准点率" value={report.keyMetrics.avgOnTimeRate} unit="%" diff={cmp?.avgOnTimeRate} />
+          <MetricCard label="异常总数" value={report.keyMetrics.totalAnomalies} diff={cmp?.totalAnomalies} diffInverse />
+          <MetricCard label="闭环率" value={report.keyMetrics.closedRate} unit="%" diff={cmp?.closedRate} />
         </div>
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-navy-500 mb-3">异常概览</h3>
+        <h3 className="text-sm font-semibold text-navy-500 mb-3 flex items-center gap-2">
+          <span className="w-1 h-4 bg-amber-400 rounded-full"></span>
+          异常概览
+        </h3>
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -287,8 +294,8 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-navy-500 mb-3">
-          <Lightbulb className="w-4 h-4 inline mr-1.5 text-amber-400" />
+        <h3 className="text-sm font-semibold text-navy-500 mb-3 flex items-center gap-2">
+          <Lightbulb className="w-4 h-4 text-amber-400" />
           培训建议
         </h3>
         <div className="space-y-2">
@@ -304,8 +311,8 @@ function ReportDetail({ report, onBack }: { report: MonthlyReport; onBack: () =>
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold text-navy-500 mb-3">
-          <Calendar className="w-4 h-4 inline mr-1.5 text-ice-400" />
+        <h3 className="text-sm font-semibold text-navy-500 mb-3 flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-ice-400" />
           排班建议
         </h3>
         <div className="space-y-2">
@@ -332,11 +339,27 @@ export default function Report() {
   const generateMonthlyReport = useAppStore((s) => s.generateMonthlyReport)
 
   const [selectedReport, setSelectedReport] = useState<MonthlyReport | null>(null)
+  const [scopeRegion, setScopeRegion] = useState('全部区域')
+  const [scopeStore, setScopeStore] = useState('')
+  const [scopeProject, setScopeProject] = useState('')
 
   const currentMonth = useMemo(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   }, [])
+
+  const scope: ReportScope = useMemo(() => {
+    const s: ReportScope = {}
+    if (scopeRegion !== '全部区域') s.region = scopeRegion
+    if (scopeStore) s.storeId = scopeStore
+    if (scopeProject) s.projectType = scopeProject
+    return s
+  }, [scopeRegion, scopeStore, scopeProject])
+
+  const scopeStores = useMemo(() => {
+    if (scopeRegion === '全部区域') return stores
+    return stores.filter(s => s.region === scopeRegion)
+  }, [scopeRegion])
 
   const sortedReports = useMemo(
     () => [...reports].sort((a, b) => (a.month < b.month ? 1 : -1)),
@@ -344,13 +367,24 @@ export default function Report() {
   )
 
   const handleGenerate = () => {
-    const report = generateMonthlyReport(currentMonth)
+    const report = generateMonthlyReport(currentMonth, scope, false)
+    setSelectedReport(report)
+  }
+
+  const handleRegenerate = () => {
+    const report = generateMonthlyReport(currentMonth, scope, true)
     setSelectedReport(report)
   }
 
   const displayReport = selectedReport
     ? reports.find((r) => r.id === selectedReport.id) || selectedReport
     : null
+
+  const handleRegionChange = (val: string) => {
+    setScopeRegion(val)
+    setScopeStore('')
+    setSelectedReport(null)
+  }
 
   return (
     <div className="p-6">
@@ -361,10 +395,65 @@ export default function Report() {
         </div>
       </div>
 
+      {/* 范围筛选 */}
+      {!displayReport && (
+        <div className="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-navy-200" />
+            <span className="text-sm text-navy-300">报告范围：</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-navy-200">区域</label>
+            <select
+              value={scopeRegion}
+              onChange={(e) => handleRegionChange(e.target.value)}
+              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ice-400/50"
+            >
+              {regions.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-navy-200">门店</label>
+            <select
+              value={scopeStore}
+              onChange={(e) => { setScopeStore(e.target.value); setSelectedReport(null) }}
+              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ice-400/50 min-w-[160px]"
+              disabled={scopeStores.length === 0}
+            >
+              <option value="">全部门店</option>
+              {scopeStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-navy-200">项目类别</label>
+            <select
+              value={scopeProject}
+              onChange={(e) => { setScopeProject(e.target.value); setSelectedReport(null) }}
+              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ice-400/50"
+            >
+              <option value="">全部项目</option>
+              <option value="injection">注射类</option>
+              <option value="surgery">手术类</option>
+              <option value="laser">光电类</option>
+            </select>
+          </div>
+          <div className="ml-auto text-xs text-navy-200">
+            当前月份：<span className="text-navy-500 font-medium font-mono">{currentMonth}</span>
+          </div>
+        </div>
+      )}
+
       {displayReport ? (
         <ReportDetail report={displayReport} onBack={() => setSelectedReport(null)} />
       ) : (
-        <ReportList reports={sortedReports} onSelect={setSelectedReport} onGenerate={handleGenerate} />
+        <ReportList
+          reports={sortedReports}
+          onSelect={setSelectedReport}
+          onGenerate={handleGenerate}
+          onRegenerate={handleRegenerate}
+          scope={scope}
+          currentMonth={currentMonth}
+        />
       )}
     </div>
   )

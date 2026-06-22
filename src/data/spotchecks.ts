@@ -10,6 +10,7 @@ export const spotchecks: SpotCheck[] = [
     id: 'sc2', storeId: 's4', storeName: '徐汇衡山院', date: '2025-06-18', assistantName: '赵红', projectName: '玻尿酸注射',
     result: 'fail', photos: [{ url: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=medical+desk+with+incomplete+paperwork+and+missing+records+highlighted+with+red+arrows&image_size=landscape_4_3', caption: '批号记录缺失' }],
     audioSummary: '药品批号未记录，注射部位记录不完整，需整改', signatureConfirmed: false, notes: '已关联异常派发整改任务', createdAt: '2025-06-18',
+    anomalyIds: ['an1'],
   },
   {
     id: 'sc3', storeId: 's3', storeName: '浦东陆家嘴院', date: '2025-06-15', assistantName: '陈晓燕', projectName: '线雕提升',
@@ -30,6 +31,7 @@ export const spotchecks: SpotCheck[] = [
     id: 'sc6', storeId: 's8', storeName: '渝北金开院', date: '2025-06-19', assistantName: '邓晓雯', projectName: '热玛吉',
     result: 'fail', photos: [{ url: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=medical+record+form+with+blank+empty+fields+highlighted+with+red+warning+markers&image_size=landscape_4_3', caption: '参数记录不完整' }],
     audioSummary: '热玛吉能量等级和发数未记录，需整改', signatureConfirmed: false, notes: '已关联异常派发整改任务', createdAt: '2025-06-19',
+    anomalyIds: ['an3'],
   },
   {
     id: 'sc7', storeId: 's2', storeName: '海淀学院院', date: '2025-06-17', assistantName: '杨静', projectName: '肉毒素注射',
@@ -40,6 +42,7 @@ export const spotchecks: SpotCheck[] = [
     id: 'sc8', storeId: 's7', storeName: '武侯锦江院', date: '2025-06-13', assistantName: '曹雨萱', projectName: '光子嫩肤',
     result: 'fail', photos: [{ url: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=medical+consent+form+with+missing+signature+highlighted+with+red+circle+on+clinical+desk&image_size=landscape_4_3', caption: '知情同意书遗漏' }],
     audioSummary: '知情同意书未在术前签署，违反操作规范', signatureConfirmed: false, notes: '已关联异常派发整改任务', createdAt: '2025-06-13',
+    anomalyIds: ['an7'],
   },
   {
     id: 'sc9', storeId: 's1', storeName: '朝阳旗舰院', date: '2025-06-10', assistantName: '李婷', projectName: '双眼皮手术',

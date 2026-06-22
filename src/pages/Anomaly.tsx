@@ -1,12 +1,13 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useAppStore } from '@/store/useAppStore'
 import { stores } from '@/data/stores'
 import { assistants } from '@/data/assistants'
-import type { Anomaly as AnomalyType } from '@/types'
+import type { Anomaly as AnomalyType, Attachment, TaskStatus } from '@/types'
 import {
-  Clock, Loader, CheckCircle2, AlertTriangle, Eye, X, FileText, Plus, Upload, Send, Check, XCircle } from 'lucide-react'
+  Clock, Loader, CheckCircle2, AlertTriangle, Eye, X, FileText, Plus, Upload, Send, Check, XCircle,
+  History, AlertOctagon, Bell, ChevronRight, Paperclip, User, Calendar } from 'lucide-react'
 
-type StatusFilter = 'all' | 'pending' | 'processing' | 'closed'
+type StatusFilter = 'all' | 'pending' | 'processing' | 'closed' | 'urgent' | 'overdue'
 
 const statusConfig = {
   pending: { label: '待处理', bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-l-amber-400', icon: Clock },
@@ -14,11 +15,24 @@ const statusConfig = {
   closed: { label: '已闭环', bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-l-emerald-400', icon: CheckCircle2 },
 } as const
 
-const taskStatusMap: Record<string, { label: string; color: string; bgLight: string }> = {
-  pending: { label: '待上传', color: 'text-amber-600', bgLight: 'bg-amber-50' },
-  uploaded: { label: '已上传', color: 'text-ice-600', bgLight: 'bg-ice-50' },
-  approved: { label: '已通过', color: 'text-emerald-600', bgLight: 'bg-emerald-50' },
-  rejected: { label: '已驳回', color: 'text-red-600', bgLight: 'bg-red-50' },
+const urgencyConfig = {
+  normal: { label: '正常', bg: 'bg-gray-50', text: 'text-gray-500' },
+  soon: { label: '即将到期', bg: 'bg-amber-50', text: 'text-amber-600' },
+  overdue: { label: '已逾期', bg: 'bg-red-50', text: 'text-red-600' },
+} as const
+
+const taskStatusMap: Record<string, { label: string; color: string; bgLight: string; dot: string }> = {
+  pending: { label: '待提交', color: 'text-amber-600', bgLight: 'bg-amber-50', dot: 'bg-amber-400' },
+  uploaded: { label: '已提交', color: 'text-ice-600', bgLight: 'bg-ice-50', dot: 'bg-ice-400' },
+  approved: { label: '已通过', color: 'text-emerald-600', bgLight: 'bg-emerald-50', dot: 'bg-emerald-400' },
+  rejected: { label: '已驳回', color: 'text-red-600', bgLight: 'bg-red-50', dot: 'bg-red-400' },
+}
+
+const historyStatusLabel: Record<TaskStatus, string> = {
+  pending: '任务派发',
+  uploaded: '提交整改',
+  approved: '审批通过',
+  rejected: '审批驳回',
 }
 
 export default function Anomaly() {
@@ -34,6 +48,7 @@ export default function Anomaly() {
   const [showNewModal, setShowNewModal] = useState(false)
   const [showSubmitModal, setShowSubmitModal] = useState(false)
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<'tasks' | 'timeline'>('tasks')
 
   const [newForm, setNewForm] = useState({
     title: '',
@@ -46,45 +61,49 @@ export default function Anomaly() {
 
   const [submitNote, setSubmitNote] = useState('')
   const [reviewNote, setReviewNote] = useState('')
+  const [submitFiles, setSubmitFiles] = useState<Attachment[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const filtered = useMemo(
-    () => (statusFilter === 'all' ? anomalies : anomalies.filter((a) => a.status === statusFilter)),
-    [statusFilter, anomalies],
-  )
+  const filtered = useMemo(() => {
+    if (statusFilter === 'all') return anomalies
+    if (statusFilter === 'urgent') return anomalies.filter(a => a.urgency === 'soon' || a.urgency === 'overdue')
+    if (statusFilter === 'overdue') return anomalies.filter(a => a.urgency === 'overdue')
+    return anomalies.filter((a) => a.status === statusFilter)
+  }, [statusFilter, anomalies])
 
   const counts = useMemo(
     () => ({
       pending: anomalies.filter((a) => a.status === 'pending').length,
       processing: anomalies.filter((a) => a.status === 'processing').length,
       closed: anomalies.filter((a) => a.status === 'closed').length,
+      urgent: anomalies.filter(a => a.urgency === 'soon' || a.urgency === 'overdue').length,
+      overdue: anomalies.filter(a => a.urgency === 'overdue').length,
     }),
     [anomalies],
   )
-
-  const summaryCards = [
-    { key: 'pending' as const, count: counts.pending, ...statusConfig.pending },
-    { key: 'processing' as const, count: counts.processing, ...statusConfig.processing },
-    { key: 'closed' as const, count: counts.closed, ...statusConfig.closed },
-  ]
 
   const tabs: { value: StatusFilter; label: string }[] = [
     { value: 'all', label: '全部' },
     { value: 'pending', label: '待处理' },
     { value: 'processing', label: '处理中' },
     { value: 'closed', label: '已闭环' },
+    { value: 'urgent', label: '催办视图' },
   ]
 
   const openDetail = (a: AnomalyType) => {
     setSelectedAnomaly(a)
     setShowDetail(true)
+    setDetailTab('tasks')
   }
 
   const currentAnomaly = selectedAnomaly
     ? anomalies.find((a) => a.id === selectedAnomaly.id) || selectedAnomaly
     : null
 
+  const canCreate = newForm.title && newForm.storeId && newForm.deadline && newForm.assignee
+
   const handleCreate = () => {
-    if (!newForm.title || !newForm.storeId || !newForm.deadline) return
+    if (!canCreate) return
     const store = stores.find((s) => s.id === newForm.storeId)
     if (!store) return
     addAnomaly({
@@ -95,19 +114,34 @@ export default function Anomaly() {
       deadline: newForm.deadline,
       description: newForm.description,
       status: 'pending',
-      assignee: newForm.assignee || undefined,
+      assignee: newForm.assignee,
     })
     setShowNewModal(false)
     setNewForm({ title: '', storeId: '', projectName: '注射类', description: '', deadline: '', assignee: '' })
   }
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+    const newAtts: Attachment[] = Array.from(files).map(f => ({
+      name: f.name,
+      type: f.type || 'file',
+      url: URL.createObjectURL(f),
+    }))
+    setSubmitFiles(prev => [...prev, ...newAtts])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removeFile = (idx: number) => {
+    setSubmitFiles(prev => prev.filter((_, i) => i !== idx))
+  }
+
   const handleSubmit = () => {
     if (!currentAnomaly || !activeTaskId || !submitNote) return
-    submitRectification(currentAnomaly.id, activeTaskId, submitNote, [
-      { name: '复盘说明.pdf', type: 'pdf', url: '#' },
-    ])
+    submitRectification(currentAnomaly.id, activeTaskId, submitNote, submitFiles)
     setShowSubmitModal(false)
     setSubmitNote('')
+    setSubmitFiles([])
     setActiveTaskId(null)
   }
 
@@ -131,6 +165,7 @@ export default function Anomaly() {
     setActiveTaskId(taskId)
     setShowSubmitModal(true)
     setSubmitNote('')
+    setSubmitFiles([])
     setReviewNote('')
   }
 
@@ -139,12 +174,21 @@ export default function Anomaly() {
     setShowSubmitModal(true)
     setReviewNote('')
     setSubmitNote('')
+    setSubmitFiles([])
   }
 
   const selectedStore = stores.find((s) => s.id === newForm.storeId)
   const storeAssistants = selectedStore
     ? assistants.filter((a) => a.storeId === selectedStore.id)
     : []
+
+  const allHistory = useMemo(() => {
+    if (!currentAnomaly) return []
+    const items = currentAnomaly.rectificationTasks.flatMap(t =>
+      t.history.map(h => ({ ...h, taskId: t.id, assignee: t.assignee }))
+    )
+    return items.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+  }, [currentAnomaly])
 
   return (
     <div className="p-6 space-y-6">
@@ -161,22 +205,55 @@ export default function Anomaly() {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        {summaryCards.map((card) => (
-          <div
-            key={card.key}
-            className={`bg-white rounded-lg shadow-sm border-l-4 ${card.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
-            onClick={() => setStatusFilter(card.key)}
-          >
-            <div className={`w-10 h-10 rounded-lg ${card.bg} ${card.text} flex items-center justify-center`}>
-              <card.icon className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-mono font-bold text-navy-500">{card.count}</p>
-              <p className="text-xs text-navy-200">{card.label}</p>
-            </div>
+      <div className="grid grid-cols-4 gap-4">
+        <div
+          className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.pending.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
+          onClick={() => setStatusFilter('pending')}
+        >
+          <div className={`w-10 h-10 rounded-lg ${statusConfig.pending.bg} ${statusConfig.pending.text} flex items-center justify-center`}>
+            <Clock className="w-5 h-5" />
           </div>
-        ))}
+          <div>
+            <p className="text-2xl font-mono font-bold text-navy-500">{counts.pending}</p>
+            <p className="text-xs text-navy-200">待处理</p>
+          </div>
+        </div>
+        <div
+          className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.processing.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
+          onClick={() => setStatusFilter('processing')}
+        >
+          <div className={`w-10 h-10 rounded-lg ${statusConfig.processing.bg} ${statusConfig.processing.text} flex items-center justify-center`}>
+            <Loader className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-2xl font-mono font-bold text-navy-500">{counts.processing}</p>
+            <p className="text-xs text-navy-200">处理中</p>
+          </div>
+        </div>
+        <div
+          className={`bg-white rounded-lg shadow-sm border-l-4 ${statusConfig.closed.border} p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer`}
+          onClick={() => setStatusFilter('closed')}
+        >
+          <div className={`w-10 h-10 rounded-lg ${statusConfig.closed.bg} ${statusConfig.closed.text} flex items-center justify-center`}>
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-2xl font-mono font-bold text-navy-500">{counts.closed}</p>
+            <p className="text-xs text-navy-200">已闭环</p>
+          </div>
+        </div>
+        <div
+          className="bg-white rounded-lg shadow-sm border-l-4 border-l-red-400 p-4 flex items-center gap-4 hover:shadow-md transition-shadow cursor-pointer"
+          onClick={() => setStatusFilter('urgent')}
+        >
+          <div className="w-10 h-10 rounded-lg bg-red-50 text-red-500 flex items-center justify-center">
+            <Bell className="w-5 h-5" />
+          </div>
+          <div>
+            <p className="text-2xl font-mono font-bold text-navy-500">{counts.urgent}</p>
+            <p className="text-xs text-navy-200">需关注（含逾期 {counts.overdue}）</p>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-sm">
@@ -204,14 +281,15 @@ export default function Anomaly() {
                 <th className="px-4 py-3 font-medium">门店</th>
                 <th className="px-4 py-3 font-medium">项目类别</th>
                 <th className="px-4 py-3 font-medium">状态</th>
-                <th className="px-4 py-3 font-medium">创建日期</th>
                 <th className="px-4 py-3 font-medium">截止日期</th>
+                <th className="px-4 py-3 font-medium">紧急度</th>
                 <th className="px-4 py-3 font-medium">操作</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((a) => {
                 const sc = statusConfig[a.status]
+                const uc = urgencyConfig[a.urgency || 'normal']
                 return (
                   <tr key={a.id} className="border-b border-gray-50 hover:bg-surface-hover transition-colors">
                     <td className="px-4 py-3 font-medium text-navy-500">{a.title}</td>
@@ -222,8 +300,14 @@ export default function Anomaly() {
                         {sc.label}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-navy-300 font-mono text-xs">{a.createdAt}</td>
                     <td className="px-4 py-3 text-navy-300 font-mono text-xs">{a.deadline}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${uc.bg} ${uc.text}`}>
+                        {a.urgency === 'overdue' && <AlertOctagon className="w-3 h-3" />}
+                        {a.urgency === 'soon' && <Clock className="w-3 h-3" />}
+                        {uc.label}
+                      </span>
+                    </td>
                     <td className="px-4 py-3">
                       <button onClick={() => openDetail(a)} className="text-ice-400 hover:underline inline-flex items-center gap-1 text-xs">
                         <Eye className="w-3.5 h-3.5" />查看详情
@@ -232,6 +316,11 @@ export default function Anomaly() {
                   </tr>
                 )
               })}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-center text-navy-200 text-sm">暂无数据</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -240,96 +329,174 @@ export default function Anomaly() {
       {/* 详情弹窗 */}
       {showDetail && currentAnomaly && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={() => setShowDetail(false)}>
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-amber-400" />
                 <h2 className="text-lg font-bold text-navy-500">{currentAnomaly.title}</h2>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${statusConfig[currentAnomaly.status].bg} ${statusConfig[currentAnomaly.status].text}`}>
                   {statusConfig[currentAnomaly.status].label}
                 </span>
+                {currentAnomaly.urgency && currentAnomaly.urgency !== 'normal' && (
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${urgencyConfig[currentAnomaly.urgency].bg} ${urgencyConfig[currentAnomaly.urgency].text}`}>
+                    {urgencyConfig[currentAnomaly.urgency].label}
+                  </span>
+                )}
               </div>
               <button onClick={() => setShowDetail(false)} className="text-navy-200 hover:text-navy-400">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="px-6 py-4 space-y-4">
-              <p className="text-sm text-navy-300 whitespace-pre-line">{currentAnomaly.description}</p>
+            <div className="px-6 py-3 border-b border-gray-100 flex gap-4">
+              <button
+                onClick={() => setDetailTab('tasks')}
+                className={`text-sm font-medium pb-1 border-b-2 transition-colors ${
+                  detailTab === 'tasks' ? 'border-ice-400 text-ice-500' : 'border-transparent text-navy-200 hover:text-navy-400'
+                }`}
+              >
+                整改任务
+              </button>
+              <button
+                onClick={() => setDetailTab('timeline')}
+                className={`text-sm font-medium pb-1 border-b-2 transition-colors inline-flex items-center gap-1 ${
+                  detailTab === 'timeline' ? 'border-ice-400 text-ice-500' : 'border-transparent text-navy-200 hover:text-navy-400'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />时间线
+              </button>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-navy-200">门店：</span><span className="text-navy-500 font-medium">{currentAnomaly.storeName}</span></div>
-                <div><span className="text-navy-200">项目：</span><span className="text-navy-500 font-medium">{currentAnomaly.projectName}</span></div>
-                <div><span className="text-navy-200">创建：</span><span className="text-navy-500 font-mono">{currentAnomaly.createdAt}</span></div>
-                <div><span className="text-navy-200">截止：</span><span className="text-navy-500 font-mono">{currentAnomaly.deadline}</span></div>
-              </div>
+            <div className="px-6 py-4 overflow-y-auto flex-1">
+              {detailTab === 'tasks' && (
+                <div className="space-y-4">
+                  <p className="text-sm text-navy-300 whitespace-pre-line">{currentAnomaly.description}</p>
 
-              <div>
-                <h3 className="text-sm font-bold text-navy-500 mb-3">整改任务</h3>
-                <div className="space-y-3">
-                  {currentAnomaly.rectificationTasks.map((task) => {
-                    const ts = taskStatusMap[task.status]
-                    const canReview = task.status === 'uploaded' || task.status === 'rejected'
-                    const canSubmit = task.status === 'pending' || task.status === 'rejected'
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <User className="w-3.5 h-3.5 text-navy-200" />
+                      <span className="text-navy-200">门店：</span>
+                      <span className="text-navy-500 font-medium">{currentAnomaly.storeName}</span>
+                    </div>
+                    <div><span className="text-navy-200">项目：</span><span className="text-navy-500 font-medium">{currentAnomaly.projectName}</span></div>
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-3.5 h-3.5 text-navy-200" />
+                      <span className="text-navy-200">创建：</span>
+                      <span className="text-navy-500 font-mono">{currentAnomaly.createdAt}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-navy-200" />
+                      <span className="text-navy-200">截止：</span>
+                      <span className={`font-mono ${currentAnomaly.urgency === 'overdue' ? 'text-red-600 font-medium' : 'text-navy-500'}`}>
+                        {currentAnomaly.deadline}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {currentAnomaly.rectificationTasks.map((task) => {
+                      const ts = taskStatusMap[task.status]
+                      const canReview = task.status === 'uploaded'
+                      const canSubmit = task.status === 'pending' || task.status === 'rejected'
+                      return (
+                        <div key={task.id} className={`border rounded-lg p-4 ${ts.bgLight}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-navy-500">负责人：{task.assignee}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${ts.color} bg-white border`}>
+                                {ts.label}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              {canSubmit && (
+                                <button
+                                  onClick={() => openSubmit(task.id)}
+                                  className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-ice-400 text-white hover:bg-ice-500 transition-colors"
+                                >
+                                  <Upload className="w-3 h-3" /> 提交
+                                </button>
+                              )}
+                              {canReview && (
+                                <button
+                                  onClick={() => openReview(task.id)}
+                                  className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-amber-400 text-white hover:bg-amber-500 transition-colors"
+                                >
+                                  审批
+                                </button>
+                              )}
+                              {task.status === 'approved' && (
+                                <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                                  <Check className="w-3 h-3" /> 已通过
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {task.uploadedAt && <p className="text-xs text-navy-200 mb-1">上传时间：{task.uploadedAt}</p>}
+                          {task.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              {task.attachments.map((att, j) => (
+                                <span key={j} className="inline-flex items-center gap-1 text-xs bg-white text-ice-600 px-2 py-0.5 rounded border border-ice-100">
+                                  <FileText className="w-3 h-3" />{att.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {task.reviewNote && (
+                            <p className="text-xs text-navy-300 bg-white px-2 py-1 rounded border border-gray-100">
+                              {task.status === 'approved' || task.status === 'rejected' ? '审批意见' : '说明'}：{task.reviewNote}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {currentAnomaly.rectificationTasks.length === 0 && (
+                      <p className="text-sm text-navy-200 text-center py-6">暂无整改任务</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {detailTab === 'timeline' && (
+                <div className="relative pl-4">
+                  <div className="absolute left-[7px] top-1 bottom-1 w-0.5 bg-gray-200"></div>
+                  {allHistory.map((h) => {
+                    const ts = taskStatusMap[h.status]
                     return (
-                      <div key={task.id} className={`border rounded-lg p-4 ${ts.bgLight}`}>
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-navy-500">负责人：{task.assignee}</span>
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${ts.color} bg-white border`}>
-                              {ts.label}
+                      <div key={h.id} className="relative mb-6 last:mb-0">
+                        <div className={`absolute -left-4 top-0.5 w-3.5 h-3.5 rounded-full ${ts.dot} border-2 border-white shadow`}></div>
+                        <div className="bg-gray-50 rounded-lg p-3 ml-4">
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-navy-500">{h.operator}</span>
+                              <span className="text-xs text-navy-200">{h.operatorRole}</span>
+                            </div>
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${ts.color} ${ts.bgLight}`}>
+                              {historyStatusLabel[h.status]}
                             </span>
                           </div>
-                          <div className="flex gap-2">
-                            {canSubmit && (
-                              <button
-                                onClick={() => openSubmit(task.id)}
-                                className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-ice-400 text-white hover:bg-ice-500 transition-colors"
-                              >
-                                <Upload className="w-3 h-3" /> 提交
-                              </button>
-                            )}
-                            {canReview && (
-                              <button
-                                onClick={() => openReview(task.id)}
-                                className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-amber-400 text-white hover:bg-amber-500 transition-colors"
-                              >
-                                审批
-                              </button>
-                            )}
-                            {task.status === 'approved' && (
-                              <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
-                                <Check className="w-3 h-3" /> 已通过
-                              </span>
-                            )}
-                          </div>
+                          <p className="text-xs text-navy-300 mb-1 font-mono">{h.timestamp}</p>
+                          <p className="text-sm text-navy-400">{h.note}</p>
+                          {h.attachments && h.attachments.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {h.attachments.map((att, i) => (
+                                <span key={i} className="inline-flex items-center gap-1 text-xs bg-white text-ice-600 px-2 py-0.5 rounded border border-ice-100">
+                                  <Paperclip className="w-3 h-3" />{att.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        {task.uploadedAt && <p className="text-xs text-navy-200 mb-1">上传时间：{task.uploadedAt}</p>}
-                        {task.attachments.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {task.attachments.map((att, j) => (
-                              <span key={j} className="inline-flex items-center gap-1 text-xs bg-white text-ice-600 px-2 py-0.5 rounded border border-ice-100">
-                                <FileText className="w-3 h-3" />{att.name}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {task.reviewNote && (
-                          <p className="text-xs text-navy-300 bg-white px-2 py-1 rounded border border-gray-100">
-                            {task.status === 'approved' ? '审批意见' : '说明'}：{task.reviewNote}
-                          </p>
-                        )}
                       </div>
                     )
                   })}
-                  {currentAnomaly.rectificationTasks.length === 0 && (
-                    <p className="text-sm text-navy-200 text-center py-6">暂无整改任务</p>
+                  {allHistory.length === 0 && (
+                    <p className="text-sm text-navy-200 text-center py-6">暂无操作记录</p>
                   )}
                 </div>
-              </div>
+              )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100">
+            <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-gray-100 flex-shrink-0">
               <button
                 onClick={() => setShowDetail(false)}
                 className="px-4 py-2 text-sm rounded-lg bg-gray-100 text-navy-300 hover:bg-gray-200 transition-colors"
@@ -354,7 +521,7 @@ export default function Anomaly() {
 
             <div className="px-6 py-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-navy-500 mb-1">异常标题</label>
+                <label className="block text-sm font-medium text-navy-500 mb-1">异常标题 <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={newForm.title}
@@ -366,7 +533,7 @@ export default function Anomaly() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-navy-500 mb-1">门店</label>
+                  <label className="block text-sm font-medium text-navy-500 mb-1">门店 <span className="text-red-500">*</span></label>
                   <select
                     value={newForm.storeId}
                     onChange={(e) => setNewForm({ ...newForm, storeId: e.target.value, assignee: '' })}
@@ -394,21 +561,21 @@ export default function Anomaly() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-navy-500 mb-1">负责人</label>
+                  <label className="block text-sm font-medium text-navy-500 mb-1">负责人 <span className="text-red-500">*</span></label>
                   <select
                     value={newForm.assignee}
                     onChange={(e) => setNewForm({ ...newForm, assignee: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-ice-400/50 focus:border-ice-400"
                     disabled={!newForm.storeId}
                   >
-                    <option value="">请选择负责人</option>
+                    <option value="">{newForm.storeId ? '请选择负责人' : '请先选择门店'}</option>
                     {storeAssistants.map((a) => (
                       <option key={a.id} value={a.name}>{a.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-navy-500 mb-1">截止日期</label>
+                  <label className="block text-sm font-medium text-navy-500 mb-1">截止日期 <span className="text-red-500">*</span></label>
                   <input
                     type="date"
                     value={newForm.deadline}
@@ -439,7 +606,7 @@ export default function Anomaly() {
               </button>
               <button
                 onClick={handleCreate}
-                disabled={!newForm.title || !newForm.storeId || !newForm.deadline}
+                disabled={!canCreate}
                 className="inline-flex items-center gap-1 px-4 py-2 text-sm rounded-lg bg-ice-400 text-white hover:bg-ice-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send className="w-4 h-4" /> 创建任务
@@ -453,16 +620,15 @@ export default function Anomaly() {
       {showSubmitModal && currentAnomaly && activeTaskId && (() => {
         const task = currentAnomaly.rectificationTasks.find((t) => t.id === activeTaskId)
         if (!task) return null
-        const isReview = task.status === 'uploaded' || task.status === 'rejected'
+        const isReview = task.status === 'uploaded'
         const isSubmitView = task.status === 'pending' || task.status === 'rejected'
-        const showApproveReject = isReview && task.status !== 'pending'
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-500/50 backdrop-blur-sm" onClick={() => { setShowSubmitModal(false); setActiveTaskId(null) }}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                 <h2 className="text-lg font-bold text-navy-500">
-                  {showApproveReject ? '审批整改' : '提交整改说明'}
+                  {isReview ? '审批整改' : '提交整改说明'}
                 </h2>
                 <button onClick={() => { setShowSubmitModal(false); setActiveTaskId(null) }} className="text-navy-200 hover:text-navy-400">
                   <X className="w-5 h-5" />
@@ -477,7 +643,7 @@ export default function Anomaly() {
 
                 {isSubmitView && (
                   <div>
-                    <label className="block text-sm font-medium text-navy-500 mb-1">复盘说明</label>
+                    <label className="block text-sm font-medium text-navy-500 mb-1">复盘说明 <span className="text-red-500">*</span></label>
                     <textarea
                       value={submitNote}
                       onChange={(e) => setSubmitNote(e.target.value)}
@@ -488,7 +654,7 @@ export default function Anomaly() {
                   </div>
                 )}
 
-                {showApproveReject && (
+                {isReview && (
                   <div>
                     <label className="block text-sm font-medium text-navy-500 mb-1">审批意见</label>
                     <textarea
@@ -502,10 +668,37 @@ export default function Anomaly() {
                 )}
 
                 {isSubmitView && (
-                  <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
-                    <Upload className="w-6 h-6 text-navy-200 mx-auto mb-1" />
-                    <p className="text-xs text-navy-200">点击或拖拽上传附件</p>
-                    <p className="text-xs text-navy-100 mt-1">支持 PDF / Word / 图片</p>
+                  <div>
+                    <label className="block text-sm font-medium text-navy-500 mb-1">附件</label>
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center cursor-pointer hover:border-ice-400 hover:bg-ice-50/30 transition-colors"
+                    >
+                      <Upload className="w-6 h-6 text-navy-200 mx-auto mb-1" />
+                      <p className="text-xs text-navy-200">点击选择文件上传</p>
+                      <p className="text-xs text-navy-100 mt-1">支持 PDF / Word / 图片</p>
+                    </div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                    {submitFiles.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {submitFiles.map((f, i) => (
+                          <div key={i} className="flex items-center justify-between bg-gray-50 rounded px-2 py-1.5 text-xs">
+                            <span className="flex items-center gap-1 text-navy-400">
+                              <Paperclip className="w-3 h-3" />{f.name}
+                            </span>
+                            <button onClick={() => removeFile(i)} className="text-navy-200 hover:text-red-500">
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -526,7 +719,7 @@ export default function Anomaly() {
                     <Upload className="w-4 h-4" /> 提交
                   </button>
                 )}
-                {showApproveReject && (
+                {isReview && (
                   <>
                     <button
                       onClick={handleReject}

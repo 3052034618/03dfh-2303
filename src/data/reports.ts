@@ -2,8 +2,9 @@ import type { MonthlyReport } from '@/types'
 
 export const reports: MonthlyReport[] = [
   {
-    id: 'r1', month: '2025-06', generatedAt: '2025-06-22', status: 'draft',
+    id: 'r1', month: '2025-06', generatedAt: '2025-06-22', status: 'draft', scope: {},
     keyMetrics: { avgCompletionRate: 88.5, avgOnTimeRate: 85.7, totalAnomalies: 15, closedRate: 26.7 },
+    comparison: { avgCompletionRate: 1.7, avgOnTimeRate: 1.7, totalAnomalies: 3, closedRate: -31.6 },
     anomalySummary: [
       { category: '注射类', count: 6, trend: '↑' },
       { category: '手术类', count: 5, trend: '→' },
@@ -21,8 +22,9 @@ export const reports: MonthlyReport[] = [
     ],
   },
   {
-    id: 'r2', month: '2025-05', generatedAt: '2025-05-25', status: 'published',
+    id: 'r2', month: '2025-05', generatedAt: '2025-05-25', status: 'published', scope: {},
     keyMetrics: { avgCompletionRate: 86.8, avgOnTimeRate: 84.0, totalAnomalies: 12, closedRate: 58.3 },
+    comparison: { avgCompletionRate: 2.0, avgOnTimeRate: 1.9, totalAnomalies: -2, closedRate: 15.4 },
     anomalySummary: [
       { category: '注射类', count: 5, trend: '↓' },
       { category: '手术类', count: 4, trend: '→' },
@@ -39,7 +41,7 @@ export const reports: MonthlyReport[] = [
     ],
   },
   {
-    id: 'r3', month: '2025-04', generatedAt: '2025-04-25', status: 'published',
+    id: 'r3', month: '2025-04', generatedAt: '2025-04-25', status: 'published', scope: {},
     keyMetrics: { avgCompletionRate: 84.8, avgOnTimeRate: 82.1, totalAnomalies: 14, closedRate: 42.9 },
     anomalySummary: [
       { category: '注射类', count: 7, trend: '↑' },
@@ -57,7 +59,7 @@ export const reports: MonthlyReport[] = [
     ],
   },
   {
-    id: 'r4', month: '2025-03', generatedAt: '2025-03-25', status: 'published',
+    id: 'r4', month: '2025-03', generatedAt: '2025-03-25', status: 'published', scope: {},
     keyMetrics: { avgCompletionRate: 82.5, avgOnTimeRate: 79.8, totalAnomalies: 16, closedRate: 37.5 },
     anomalySummary: [
       { category: '注射类', count: 6, trend: '→' },
@@ -75,7 +77,7 @@ export const reports: MonthlyReport[] = [
     ],
   },
   {
-    id: 'r5', month: '2025-02', generatedAt: '2025-02-25', status: 'published',
+    id: 'r5', month: '2025-02', generatedAt: '2025-02-25', status: 'published', scope: {},
     keyMetrics: { avgCompletionRate: 80.2, avgOnTimeRate: 77.5, totalAnomalies: 18, closedRate: 33.3 },
     anomalySummary: [
       { category: '注射类', count: 6, trend: '↑' },
@@ -93,7 +95,7 @@ export const reports: MonthlyReport[] = [
     ],
   },
   {
-    id: 'r6', month: '2025-01', generatedAt: '2025-01-25', status: 'published',
+    id: 'r6', month: '2025-01', generatedAt: '2025-01-25', status: 'published', scope: {},
     keyMetrics: { avgCompletionRate: 77.6, avgOnTimeRate: 75.0, totalAnomalies: 22, closedRate: 27.3 },
     anomalySummary: [
       { category: '注射类', count: 8, trend: '→' },

@@ -72,14 +72,27 @@ export interface Attachment {
   url: string
 }
 
+export type TaskStatus = 'pending' | 'uploaded' | 'approved' | 'rejected'
+
+export interface TaskHistoryItem {
+  id: string
+  status: TaskStatus
+  operator: string
+  operatorRole: '质控' | '医助' | '护士长'
+  note: string
+  timestamp: string
+  attachments?: Attachment[]
+}
+
 export interface RectificationTask {
   id: string
   anomalyId: string
   assignee: string
-  status: 'pending' | 'uploaded' | 'approved' | 'rejected'
+  status: TaskStatus
   reviewNote?: string
   uploadedAt?: string
   attachments: Attachment[]
+  history: TaskHistoryItem[]
 }
 
 export interface Anomaly {
@@ -93,6 +106,8 @@ export interface Anomaly {
   deadline: string
   description: string
   rectificationTasks: RectificationTask[]
+  fromSpotCheckId?: string
+  urgency?: 'normal' | 'soon' | 'overdue'
 }
 
 export interface Photo {
@@ -113,6 +128,13 @@ export interface SpotCheck {
   signatureConfirmed: boolean
   notes: string
   createdAt: string
+  anomalyIds?: string[]
+}
+
+export interface AnomalySummaryItem {
+  category: string
+  count: number
+  trend: string
 }
 
 export interface KeyMetrics {
@@ -122,10 +144,17 @@ export interface KeyMetrics {
   closedRate: number
 }
 
-export interface AnomalySummaryItem {
-  category: string
-  count: number
-  trend: string
+export interface ReportScope {
+  region?: string
+  storeId?: string
+  projectType?: string
+}
+
+export interface MetricsComparison {
+  avgCompletionRate: number
+  avgOnTimeRate: number
+  totalAnomalies: number
+  closedRate: number
 }
 
 export interface MonthlyReport {
@@ -133,7 +162,9 @@ export interface MonthlyReport {
   month: string
   generatedAt: string
   status: 'draft' | 'published'
+  scope: ReportScope
   keyMetrics: KeyMetrics
+  comparison?: MetricsComparison
   anomalySummary: AnomalySummaryItem[]
   trainingSuggestions: string[]
   schedulingSuggestions: string[]
