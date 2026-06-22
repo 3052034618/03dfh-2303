@@ -1,0 +1,140 @@
+export interface StoreTrend {
+  month: string
+  completionRate: number
+  onTimeRate: number
+}
+
+export interface Store {
+  id: string
+  name: string
+  region: string
+  city: string
+  completionRate: number
+  onTimeRate: number
+  preCheckOmissionRate: number
+  tempMaterialCount: number
+  totalScore: number
+  trend: StoreTrend[]
+}
+
+export interface ProjectMetrics {
+  batchRecordRate?: number
+  siteRecordRate?: number
+  instrumentCheckRate?: number
+  handoverRate?: number
+  paramRecordRate?: number
+  consentCheckRate?: number
+}
+
+export interface TopIssue {
+  issue: string
+  count: number
+}
+
+export interface ProjectCategory {
+  id: string
+  name: string
+  type: 'injection' | 'surgery' | 'laser'
+  icon: string
+  anomalyCount: number
+  totalCases: number
+  metrics: ProjectMetrics
+  topIssues: TopIssue[]
+}
+
+export interface CapabilityTag {
+  name: string
+  score: number
+}
+
+export interface AssistantTrend {
+  month: string
+  score: number
+}
+
+export interface Assistant {
+  id: string
+  name: string
+  avatar: string
+  storeId: string
+  storeName: string
+  overallScore: number
+  proficiencyProjects: string[]
+  capabilityTags: CapabilityTag[]
+  anomalyProneLinks: string[]
+  trainingSuggestions: string[]
+  trend: AssistantTrend[]
+}
+
+export interface Attachment {
+  name: string
+  type: string
+  url: string
+}
+
+export interface RectificationTask {
+  id: string
+  anomalyId: string
+  assignee: string
+  status: 'pending' | 'uploaded' | 'approved' | 'rejected'
+  reviewNote?: string
+  uploadedAt?: string
+  attachments: Attachment[]
+}
+
+export interface Anomaly {
+  id: string
+  title: string
+  storeId: string
+  storeName: string
+  projectName: string
+  status: 'pending' | 'processing' | 'closed'
+  createdAt: string
+  deadline: string
+  description: string
+  rectificationTasks: RectificationTask[]
+}
+
+export interface Photo {
+  url: string
+  caption: string
+}
+
+export interface SpotCheck {
+  id: string
+  storeId: string
+  storeName: string
+  date: string
+  assistantName: string
+  projectName: string
+  result: 'pass' | 'fail' | 'warning'
+  photos: Photo[]
+  audioSummary: string
+  signatureConfirmed: boolean
+  notes: string
+  createdAt: string
+}
+
+export interface KeyMetrics {
+  avgCompletionRate: number
+  avgOnTimeRate: number
+  totalAnomalies: number
+  closedRate: number
+}
+
+export interface AnomalySummaryItem {
+  category: string
+  count: number
+  trend: string
+}
+
+export interface MonthlyReport {
+  id: string
+  month: string
+  generatedAt: string
+  status: 'draft' | 'published'
+  keyMetrics: KeyMetrics
+  anomalySummary: AnomalySummaryItem[]
+  trainingSuggestions: string[]
+  schedulingSuggestions: string[]
+}
